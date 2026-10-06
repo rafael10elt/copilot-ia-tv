@@ -116,7 +116,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-wide flex items-center gap-2">
-              LUMI COPILOT <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono uppercase">Vision Sentinel</span>
+              LUMI COPILOT <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono uppercase">Visão Sentinela</span>
             </h1>
             <p className="text-xs text-slate-400">TradingView Free Monitor • Nasdaq MNQ</p>
           </div>
