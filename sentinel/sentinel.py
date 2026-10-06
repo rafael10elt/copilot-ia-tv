@@ -14,7 +14,7 @@ import numpy as np
 import cv2
 from supabase import create_client
 
-# DPI AWARENESS
+# 1. ATIVA SUPORTE DPI DO WINDOWS
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -23,6 +23,7 @@ except Exception:
     except Exception:
         pass
 
+# 2. DETECÇÃO WIN32
 try:
     import win32gui
     HAS_WIN32 = True
@@ -38,31 +39,38 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
 
 def detectar_ativo_tradingview():
-    """Varre todas as janelas do Windows com regex amplo para pegar o ativo real"""
+    """
+    Busca a janela ativa do TradingView e extrai o ticker que antecede o preco/seta
+    Ex: 'BTCUSD ▼ 85.521,90...' -> BTCUSD
+    Ex: 'USOIL ▼ 89,83...'      -> USOIL
+    Ex: 'XAUUSD ▲ 4.167,100...' -> XAUUSD
+    """
     if not HAS_WIN32:
-        return "BTCUSD"
+        return None
 
-    simbolo = None
+    candidatos = []
 
     def enum_cb(hwnd, _):
-        nonlocal simbolo
         if win32gui.IsWindowVisible(hwnd):
             tit = win32gui.GetWindowText(hwnd).strip()
-            # Procura por qualquer janela que mencione TradingView ou o par
-            if any(k in tit for k in ["TradingView", "Lumitrader", "Bitcoin", "Ouro", "CFDs", "Dólar"]):
-                limpo = tit.replace("▲", " ").replace("▼", " ").replace("—", " ").replace("-", " ")
-                tokens = limpo.split()
-                if tokens:
-                    candidato = tokens[0].replace(",", "").replace(":", "").strip().upper()
-                    if re.match(r"^[A-Z0-9!._]{2,10}$", candidato) and candidato not in ["TRADINGVIEW", "CHROME", "EDGE", "BRAVE"]:
-                        simbolo = candidato
+            # Identifica janelas de gráfico do TradingView
+            if tit and any(k in tit for k in ["TradingView", "Lumitrader", "Ouro", "Petróleo", "Bitcoin"]):
+                candidatos.append(tit)
 
     try:
         win32gui.EnumWindows(enum_cb, None)
     except Exception:
         pass
 
-    return simbolo if simbolo else "ATIVO ATUAL"
+    for tit in candidatos:
+        # Pega a primeira palavra alfanumerica do titulo
+        m = re.match(r"^([A-Z0-9!._]{2,10})", tit)
+        if m:
+            candidato = m.group(1).upper()
+            if candidato not in ["TRADINGVIEW", "CHROME", "EDGE", "BRAVE", "LUMITRADER"]:
+                return candidato
+
+    return None
 
 
 class FullscreenCalibrator:
@@ -129,7 +137,8 @@ class SentinelApp:
         self.running = False
         self.sct = mss.mss()
         self.roi = None
-        self.ativo = "DETECTANDO..."
+        self.ativo_atual = "BTCUSD"
+        self.auto_detect = True
         self.carregar_roi()
 
         # HEADER
@@ -155,29 +164,40 @@ class SentinelApp:
         info = tk.Frame(main, bg="#0d1527", padx=14, pady=10)
         info.pack(fill="x", pady=(0, 15))
 
-        # Ativo com campo editável ou auto-detect
+        # PAINEL DO ATIVO (DINÂMICO COM SELETOR AUTO/MANUAL)
         ativo_frame = tk.Frame(info, bg="#0d1527")
         ativo_frame.pack(fill="x")
         
-        tk.Label(ativo_frame, text="Ativo:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0d1527").pack(side="left")
-        self.txt_ativo = tk.Entry(ativo_frame, font=("Segoe UI", 10, "bold"), fg="#c084fc", bg="#020617", insertbackground="#c084fc", relief="flat", width=12)
-        self.txt_ativo.pack(side="left", padx=6)
-        self.txt_ativo.insert(0, "BTCUSD")
+        tk.Label(ativo_frame, text="Ativo Monitorado:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0d1527").pack(side="left")
+        
+        self.lbl_ativo_display = tk.Label(ativo_frame, text="BTCUSD", font=("Segoe UI", 11, "bold"), fg="#c084fc", bg="#0d1527")
+        self.lbl_ativo_display.pack(side="left", padx=8)
+
+        self.btn_modo_ativo = tk.Button(ativo_frame, text="[MODO AUTO: ATIVO]", font=("Segoe UI", 8, "bold"), bg="#1e293b", fg="#34d399", relief="flat", padx=6, pady=1, command=self.toggle_modo_ativo)
+        self.btn_modo_ativo.pack(side="right")
 
         self.lbl_estado = tk.Label(info, text="Estado: Aguardando...", font=("Segoe UI", 9), fg="#ffffff", bg="#0d1527")
-        self.lbl_estado.pack(anchor="w", pady=(5, 0))
+        self.lbl_estado.pack(anchor="w", pady=(6, 0))
 
         self.lbl_gatilho = tk.Label(info, text="Último Sinal: Nenhum", font=("Segoe UI", 9), fg="#94a3b8", bg="#0d1527")
         self.lbl_gatilho.pack(anchor="w", pady=(2, 0))
 
-        # BOTÕES
+        # BOTÕES DE AÇÃO
         self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR ÁREA (RECORTE)", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=10, command=self.calibrar, cursor="hand2")
         self.btn_calib.pack(fill="x", pady=(0, 8))
 
         self.btn_run = tk.Button(main, text="▶️ 2. INICIAR SENTINELA", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", pady=10, command=self.toggle_run, cursor="hand2")
         self.btn_run.pack(fill="x")
 
+        # Inicia loop global de atualização
         self.root.after(300, self.atualizar_preview_loop)
+
+    def toggle_modo_ativo(self):
+        self.auto_detect = not self.auto_detect
+        if self.auto_detect:
+            self.btn_modo_ativo.config(text="[MODO AUTO: ATIVO]", fg="#34d399")
+        else:
+            self.btn_modo_ativo.config(text="[MODO AUTO: PAUSADO]", fg="#f87171")
 
     def carregar_roi(self):
         if os.path.exists(CONFIG_FILE):
@@ -200,14 +220,11 @@ class SentinelApp:
     def processar_imagem_preview(self, shot):
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         w_orig, h_orig = img.size
-
         fator_w = 420 / w_orig
         fator_h = 100 / h_orig
         fator = min(fator_w, fator_h, 3.0)
-
         novo_w = max(int(w_orig * fator), 50)
         novo_h = max(int(h_orig * fator), 40)
-
         img_redim = img.resize((novo_w, novo_h), Image.Resampling.LANCZOS)
         return ImageTk.PhotoImage(img_redim)
 
@@ -221,14 +238,16 @@ class SentinelApp:
         except Exception:
             pass
 
+    def checar_ativo_em_tempo_real(self):
+        """Atualiza o ativo da tela sem travar a interface"""
+        if self.auto_detect:
+            novo = detectar_ativo_tradingview()
+            if novo and novo != self.ativo_atual:
+                self.ativo_atual = novo
+                self.lbl_ativo_display.config(text=self.ativo_atual)
+
     def atualizar_preview_loop(self):
-        # Atualiza a janela com o ativo detectado caso o usuário não tenha editado manualmente
-        novo = detectar_ativo_tradingview()
-        if novo and novo != "ATIVO ATUAL" and not self.running:
-            cur = self.txt_ativo.get().strip()
-            if not cur or cur in ["BTCUSD", "XAUUSD", "MNQ1!", "USOIL"]:
-                self.txt_ativo.delete(0, tk.END)
-                self.txt_ativo.insert(0, novo)
+        self.checar_ativo_em_tempo_real()
 
         if self.roi and not self.running:
             self.render_preview()
@@ -250,26 +269,18 @@ class SentinelApp:
             self.btn_run.config(text="▶️ INICIAR SENTINELA", bg="#10b981")
 
     def classificar_estado(self, frame_bgr):
-        """
-        Classificação robusta:
-        1. Se houver fundo/texto vermelho dominante -> VENDA (SELL)
-        2. Se houver fundo verde com texto COMPRA -> COMPRA (BUY)
-        3. Caso contrário -> AGUARDANDO FVG
-        """
         hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
 
-        # Tons de Vermelho (SELL) - dois intervalos no HSV
+        # Vermelho (SELL)
         mask_red1 = cv2.inRange(hsv, np.array([0, 100, 80]), np.array([12, 255, 255]))
         mask_red2 = cv2.inRange(hsv, np.array([168, 100, 80]), np.array([180, 255, 255]))
         mask_red = mask_red1 | mask_red2
 
-        # Tons de Verde (BUY)
+        # Verde (BUY)
         mask_green = cv2.inRange(hsv, np.array([36, 100, 80]), np.array([86, 255, 255]))
 
         red_count = cv2.countNonZero(mask_red)
         green_count = cv2.countNonZero(mask_green)
-
-        # Threshold mínimo para confirmar estado
         threshold = 40
 
         if red_count > threshold and red_count > (green_count * 1.2):
@@ -285,14 +296,13 @@ class SentinelApp:
 
         while self.running:
             try:
-                # O ativo é o que está no campo de texto (dinâmico ou manual)
-                self.ativo = self.txt_ativo.get().strip().upper() or "BTCUSD"
+                # DETECÇÃO CONTÍNUA: Atualiza o ativo mesmo durante o pregão ativo
+                self.checar_ativo_em_tempo_real()
 
                 shot = self.sct.grab(self.roi)
                 frame = np.array(shot)
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-                # Renderiza o preview
                 tk_img = self.processar_imagem_preview(shot)
                 self.lbl_img.config(image=tk_img, text="")
                 self.lbl_img.image = tk_img
@@ -300,7 +310,7 @@ class SentinelApp:
                 estado_atual = self.classificar_estado(frame_bgr)
                 self.lbl_estado.config(text=f"Estado: {estado_atual}")
 
-                # Heartbeat a cada 2 seg
+                # Heartbeat a cada 2 seg sincronizando o ativo detectado
                 agora = time.time()
                 if agora - last_hb >= 2.0:
                     last_hb = agora
@@ -309,7 +319,7 @@ class SentinelApp:
                             "is_online": True,
                             "current_state": estado_atual,
                             "last_seen": datetime.now(timezone.utc).isoformat(),
-                            "monitored_symbol": self.ativo
+                            "monitored_symbol": self.ativo_atual
                         }).eq("id", 1).execute()
                     except Exception:
                         pass
@@ -319,13 +329,13 @@ class SentinelApp:
                     if estado_atual in ["BUY", "SELL"]:
                         cor = "#34d399" if estado_atual == "BUY" else "#f87171"
                         hora = datetime.now().strftime("%H:%M:%S")
-                        self.lbl_gatilho.config(text=f"Sinal: {estado_atual} em {self.ativo} ({hora})", fg=cor)
+                        self.lbl_gatilho.config(text=f"Sinal: {estado_atual} em {self.ativo_atual} ({hora})", fg=cor)
 
                         supabase.table("lumi_signals").insert({
-                            "symbol": self.ativo,
+                            "symbol": self.ativo_atual,
                             "direction": estado_atual,
                             "status": "ACTIVE",
-                            "info": f"Gatilho confirmado ({self.ativo})"
+                            "info": f"Gatilho confirmado ({self.ativo_atual})"
                         }).execute()
 
                     last_state = estado_atual
