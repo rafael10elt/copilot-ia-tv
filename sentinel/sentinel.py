@@ -14,7 +14,7 @@ import numpy as np
 import cv2
 from supabase import create_client
 
-# 1. ATIVA SUPORTE DPI DO WINDOWS (100% dos pixels físicos reais)
+# DPI AWARENESS
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -23,7 +23,6 @@ except Exception:
     except Exception:
         pass
 
-# 2. DETECÇÃO DE JANELAS WINDOWS
 try:
     import win32gui
     HAS_WIN32 = True
@@ -39,9 +38,9 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
 
 def detectar_ativo_tradingview():
-    """Extrai dinamicamente o Ticker da janela ativa do TradingView"""
+    """Varre todas as janelas do Windows com regex amplo para pegar o ativo real"""
     if not HAS_WIN32:
-        return "XAUUSD"
+        return "BTCUSD"
 
     simbolo = None
 
@@ -49,12 +48,13 @@ def detectar_ativo_tradingview():
         nonlocal simbolo
         if win32gui.IsWindowVisible(hwnd):
             tit = win32gui.GetWindowText(hwnd).strip()
-            if "TradingView" in tit or "Lumitrader" in tit or "Ouro" in tit or "CFDs" in tit:
+            # Procura por qualquer janela que mencione TradingView ou o par
+            if any(k in tit for k in ["TradingView", "Lumitrader", "Bitcoin", "Ouro", "CFDs", "Dólar"]):
                 limpo = tit.replace("▲", " ").replace("▼", " ").replace("—", " ").replace("-", " ")
-                partes = limpo.split()
-                if partes:
-                    candidato = partes[0].replace(",", "").replace(":", "").strip().upper()
-                    if re.match(r"^[A-Z0-9!._]{2,10}$", candidato) and candidato not in ["TRADINGVIEW", "CHROME", "EDGE"]:
+                tokens = limpo.split()
+                if tokens:
+                    candidato = tokens[0].replace(",", "").replace(":", "").strip().upper()
+                    if re.match(r"^[A-Z0-9!._]{2,10}$", candidato) and candidato not in ["TRADINGVIEW", "CHROME", "EDGE", "BRAVE"]:
                         simbolo = candidato
 
     try:
@@ -66,7 +66,6 @@ def detectar_ativo_tradingview():
 
 
 class FullscreenCalibrator:
-    """Calibrador com overlay azul transparente que cobre toda a tela"""
     def __init__(self, parent_gui):
         self.parent = parent_gui
         self.top = tk.Toplevel()
@@ -101,14 +100,12 @@ class FullscreenCalibrator:
         self.canvas.coords(self.rect, self.start_x, self.start_y, e.x, e.y)
 
     def on_release(self, e):
-        x1 = min(self.start_x, e.x_root)
-        x2 = max(self.start_x, e.x_root)
-        y1 = min(self.start_y, e.y_root)
-        y2 = max(self.start_y, e.y_root)
+        x1, x2 = min(self.start_x, e.x_root), max(self.start_x, e.x_root)
+        y1, y2 = min(self.start_y, e.y_root), max(self.start_y, e.y_root)
 
         coords = {"left": int(x1), "top": int(y1), "width": int(x2 - x1), "height": int(y2 - y1)}
-
         self.top.destroy()
+        
         if coords["width"] > 20 and coords["height"] > 10:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(coords, f, indent=4)
@@ -125,7 +122,7 @@ class SentinelApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Lumi Sentinel • TradingView Desk")
-        self.root.geometry("460x600")
+        self.root.geometry("460x610")
         self.root.configure(bg="#070b14")
         self.root.attributes('-topmost', True)
 
@@ -145,33 +142,35 @@ class SentinelApp:
         main = tk.Frame(root, bg="#070b14", padx=16, pady=12)
         main.pack(fill="both", expand=True)
 
-        # PREVIEW BOX ESPAÇOSA E ALTA
         self.lbl_dimensoes = tk.Label(main, text="IMAGEM DA LEITURA (TAMANHO REAL):", font=("Segoe UI", 8, "bold"), fg="#94a3b8", bg="#070b14")
         self.lbl_dimensoes.pack(anchor="w")
-        
-        # Moldura com altura fixa generosa (110 pixels)
+
         self.box_img = tk.Frame(main, bg="#020617", bd=2, relief="groove", height=110)
         self.box_img.pack(fill="x", pady=(5, 12))
-        self.box_img.pack_propagate(False) # Mantém a altura fixa de 110px sem encolher!
+        self.box_img.pack_propagate(False)
 
-        # Label sem 'height' de texto, preenchendo a caixa inteira
-        self.lbl_img = tk.Label(self.box_img, bg="#020617", text="Clique em CALIBRAR e selecione uma caixa com boa altura", fg="#64748b", font=("Segoe UI", 9))
+        self.lbl_img = tk.Label(self.box_img, bg="#020617", text="Clique em CALIBRAR", fg="#64748b", font=("Segoe UI", 9))
         self.lbl_img.pack(fill="both", expand=True)
 
-        # DADOS EM TEMPO REAL
         info = tk.Frame(main, bg="#0d1527", padx=14, pady=10)
         info.pack(fill="x", pady=(0, 15))
 
-        self.lbl_ativo = tk.Label(info, text="Ativo Detectado: Detectando...", font=("Segoe UI", 10, "bold"), fg="#c084fc", bg="#0d1527")
-        self.lbl_ativo.pack(anchor="w")
+        # Ativo com campo editável ou auto-detect
+        ativo_frame = tk.Frame(info, bg="#0d1527")
+        ativo_frame.pack(fill="x")
+        
+        tk.Label(ativo_frame, text="Ativo:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0d1527").pack(side="left")
+        self.txt_ativo = tk.Entry(ativo_frame, font=("Segoe UI", 10, "bold"), fg="#c084fc", bg="#020617", insertbackground="#c084fc", relief="flat", width=12)
+        self.txt_ativo.pack(side="left", padx=6)
+        self.txt_ativo.insert(0, "BTCUSD")
 
         self.lbl_estado = tk.Label(info, text="Estado: Aguardando...", font=("Segoe UI", 9), fg="#ffffff", bg="#0d1527")
-        self.lbl_estado.pack(anchor="w", pady=(3, 0))
+        self.lbl_estado.pack(anchor="w", pady=(5, 0))
 
         self.lbl_gatilho = tk.Label(info, text="Último Sinal: Nenhum", font=("Segoe UI", 9), fg="#94a3b8", bg="#0d1527")
-        self.lbl_gatilho.pack(anchor="w", pady=(3, 0))
+        self.lbl_gatilho.pack(anchor="w", pady=(2, 0))
 
-        # BOTÕES DE AÇÃO
+        # BOTÕES
         self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR ÁREA (RECORTE)", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=10, command=self.calibrar, cursor="hand2")
         self.btn_calib.pack(fill="x", pady=(0, 8))
 
@@ -199,14 +198,12 @@ class SentinelApp:
         self.render_preview()
 
     def processar_imagem_preview(self, shot):
-        """Converte o shot mantendo a proporção correta com altura de até 100px"""
         img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         w_orig, h_orig = img.size
 
-        # Redimensiona proporcionalmente para caber na moldura de 420x100
         fator_w = 420 / w_orig
         fator_h = 100 / h_orig
-        fator = min(fator_w, fator_h, 3.0) # Permite zoom de até 3x se a caixa for pequena
+        fator = min(fator_w, fator_h, 3.0)
 
         novo_w = max(int(w_orig * fator), 50)
         novo_h = max(int(h_orig * fator), 40)
@@ -225,14 +222,17 @@ class SentinelApp:
             pass
 
     def atualizar_preview_loop(self):
-        novo_ativo = detectar_ativo_tradingview()
-        if novo_ativo != self.ativo:
-            self.ativo = novo_ativo
-            self.lbl_ativo.config(text=f"Ativo Detectado: {self.ativo}")
+        # Atualiza a janela com o ativo detectado caso o usuário não tenha editado manualmente
+        novo = detectar_ativo_tradingview()
+        if novo and novo != "ATIVO ATUAL" and not self.running:
+            cur = self.txt_ativo.get().strip()
+            if not cur or cur in ["BTCUSD", "XAUUSD", "MNQ1!", "USOIL"]:
+                self.txt_ativo.delete(0, tk.END)
+                self.txt_ativo.insert(0, novo)
 
         if self.roi and not self.running:
             self.render_preview()
-            
+
         self.root.after(800, self.atualizar_preview_loop)
 
     def toggle_run(self):
@@ -249,43 +249,58 @@ class SentinelApp:
             self.lbl_status.config(text="🔴 PARADO", fg="#f87171")
             self.btn_run.config(text="▶️ INICIAR SENTINELA", bg="#10b981")
 
+    def classificar_estado(self, frame_bgr):
+        """
+        Classificação robusta:
+        1. Se houver fundo/texto vermelho dominante -> VENDA (SELL)
+        2. Se houver fundo verde com texto COMPRA -> COMPRA (BUY)
+        3. Caso contrário -> AGUARDANDO FVG
+        """
+        hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+
+        # Tons de Vermelho (SELL) - dois intervalos no HSV
+        mask_red1 = cv2.inRange(hsv, np.array([0, 100, 80]), np.array([12, 255, 255]))
+        mask_red2 = cv2.inRange(hsv, np.array([168, 100, 80]), np.array([180, 255, 255]))
+        mask_red = mask_red1 | mask_red2
+
+        # Tons de Verde (BUY)
+        mask_green = cv2.inRange(hsv, np.array([36, 100, 80]), np.array([86, 255, 255]))
+
+        red_count = cv2.countNonZero(mask_red)
+        green_count = cv2.countNonZero(mask_green)
+
+        # Threshold mínimo para confirmar estado
+        threshold = 40
+
+        if red_count > threshold and red_count > (green_count * 1.2):
+            return "SELL"
+        elif green_count > threshold and green_count > (red_count * 1.2):
+            return "BUY"
+
+        return "AGUARDANDO FVG"
+
     def loop_worker(self):
         last_state = "IDLE"
         last_hb = 0
 
         while self.running:
             try:
-                self.ativo = detectar_ativo_tradingview()
-                self.lbl_ativo.config(text=f"Ativo Detectado: {self.ativo}")
+                # O ativo é o que está no campo de texto (dinâmico ou manual)
+                self.ativo = self.txt_ativo.get().strip().upper() or "BTCUSD"
 
                 shot = self.sct.grab(self.roi)
                 frame = np.array(shot)
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-                # Atualiza a tela com proporção preservada
+                # Renderiza o preview
                 tk_img = self.processar_imagem_preview(shot)
                 self.lbl_img.config(image=tk_img, text="")
                 self.lbl_img.image = tk_img
 
-                # Análise HSV
-                hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-                mask_green = cv2.inRange(hsv, np.array([40, 150, 150]), np.array([80, 255, 255]))
-                mask_red = cv2.inRange(hsv, np.array([0, 150, 150]), np.array([10, 255, 255]))
-
-                g_pix = cv2.countNonZero(mask_green)
-                r_pix = cv2.countNonZero(mask_red)
-                threshold = 35
-
-                if g_pix > threshold and g_pix > r_pix:
-                    estado_atual = "BUY"
-                elif r_pix > threshold and r_pix > g_pix:
-                    estado_atual = "SELL"
-                else:
-                    estado_atual = "AGUARDANDO FVG"
-
+                estado_atual = self.classificar_estado(frame_bgr)
                 self.lbl_estado.config(text=f"Estado: {estado_atual}")
 
-                # Heartbeat de 2 em 2 segundos
+                # Heartbeat a cada 2 seg
                 agora = time.time()
                 if agora - last_hb >= 2.0:
                     last_hb = agora
