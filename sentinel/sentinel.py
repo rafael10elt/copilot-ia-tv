@@ -14,7 +14,7 @@ import numpy as np
 import cv2
 from supabase import create_client
 
-# 1. ATIVA SUPORTE DPI DO WINDOWS (100% dos pixels físicos)
+# 1. ATIVA SUPORTE DPI DO WINDOWS (100% dos pixels físicos reais)
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -39,12 +39,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
 
 def detectar_ativo_tradingview():
-    """
-    Varre as janelas e extrai dinamicamente a primeira palavra (o Ticker)
-    Ex: 'USOIL ▼ 89,83...' -> 'USOIL'
-    Ex: 'XAUUSD ▲ 4.167...' -> 'XAUUSD'
-    Ex: 'MNQ1! 1 • CME...' -> 'MNQ1!'
-    """
+    """Extrai dinamicamente o Ticker da janela ativa do TradingView"""
     if not HAS_WIN32:
         return "XAUUSD"
 
@@ -54,14 +49,11 @@ def detectar_ativo_tradingview():
         nonlocal simbolo
         if win32gui.IsWindowVisible(hwnd):
             tit = win32gui.GetWindowText(hwnd).strip()
-            # Identifica a janela de gráfico do TradingView
             if "TradingView" in tit or "Lumitrader" in tit or "Ouro" in tit or "CFDs" in tit:
-                # Remove caracteres unicode de setas e separadores
                 limpo = tit.replace("▲", " ").replace("▼", " ").replace("—", " ").replace("-", " ")
                 partes = limpo.split()
                 if partes:
                     candidato = partes[0].replace(",", "").replace(":", "").strip().upper()
-                    # Ticker válido (3 a 10 caracteres alfanuméricos com pontuação comum de futuros)
                     if re.match(r"^[A-Z0-9!._]{2,10}$", candidato) and candidato not in ["TRADINGVIEW", "CHROME", "EDGE"]:
                         simbolo = candidato
 
@@ -74,7 +66,7 @@ def detectar_ativo_tradingview():
 
 
 class FullscreenCalibrator:
-    """Calibrador de tela cheia DPI-Aware"""
+    """Calibrador com overlay azul transparente que cobre toda a tela"""
     def __init__(self, parent_gui):
         self.parent = parent_gui
         self.top = tk.Toplevel()
@@ -109,8 +101,10 @@ class FullscreenCalibrator:
         self.canvas.coords(self.rect, self.start_x, self.start_y, e.x, e.y)
 
     def on_release(self, e):
-        x1, x2 = min(self.start_x, e.x_root), max(self.start_x, e.x_root)
-        y1, y2 = min(self.start_y, e.y_root), max(self.start_y, e.y_root)
+        x1 = min(self.start_x, e.x_root)
+        x2 = max(self.start_x, e.x_root)
+        y1 = min(self.start_y, e.y_root)
+        y2 = max(self.start_y, e.y_root)
 
         coords = {"left": int(x1), "top": int(y1), "width": int(x2 - x1), "height": int(y2 - y1)}
 
@@ -131,7 +125,7 @@ class SentinelApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Lumi Sentinel • TradingView Desk")
-        self.root.geometry("460x570")
+        self.root.geometry("460x600")
         self.root.configure(bg="#070b14")
         self.root.attributes('-topmost', True)
 
@@ -151,15 +145,18 @@ class SentinelApp:
         main = tk.Frame(root, bg="#070b14", padx=16, pady=12)
         main.pack(fill="both", expand=True)
 
-        # PREVIEW BOX AMPLIADO COM ZOOM NÍTIDO
-        tk.Label(main, text="IMAGEM DA LEITURA (ZOOM REALÇADO):", font=("Segoe UI", 8, "bold"), fg="#94a3b8", bg="#070b14").pack(anchor="w")
+        # PREVIEW BOX ESPAÇOSA E ALTA
+        self.lbl_dimensoes = tk.Label(main, text="IMAGEM DA LEITURA (TAMANHO REAL):", font=("Segoe UI", 8, "bold"), fg="#94a3b8", bg="#070b14")
+        self.lbl_dimensoes.pack(anchor="w")
         
-        self.box_img = tk.Frame(main, bg="#020617", bd=2, relief="groove")
+        # Moldura com altura fixa generosa (110 pixels)
+        self.box_img = tk.Frame(main, bg="#020617", bd=2, relief="groove", height=110)
         self.box_img.pack(fill="x", pady=(5, 12))
+        self.box_img.pack_propagate(False) # Mantém a altura fixa de 110px sem encolher!
 
-        # Altura aumentada para 90px (zoom nítido)
-        self.lbl_img = tk.Label(self.box_img, bg="#020617", height=5, text="Clique em CALIBRAR para selecionar a linha", fg="#64748b", font=("Segoe UI", 9))
-        self.lbl_img.pack(fill="both", padx=6, pady=6)
+        # Label sem 'height' de texto, preenchendo a caixa inteira
+        self.lbl_img = tk.Label(self.box_img, bg="#020617", text="Clique em CALIBRAR e selecione uma caixa com boa altura", fg="#64748b", font=("Segoe UI", 9))
+        self.lbl_img.pack(fill="both", expand=True)
 
         # DADOS EM TEMPO REAL
         info = tk.Frame(main, bg="#0d1527", padx=14, pady=10)
@@ -181,7 +178,6 @@ class SentinelApp:
         self.btn_run = tk.Button(main, text="▶️ 2. INICIAR SENTINELA", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", pady=10, command=self.toggle_run, cursor="hand2")
         self.btn_run.pack(fill="x")
 
-        # Inicia loop de atualização do preview e do ativo
         self.root.after(300, self.atualizar_preview_loop)
 
     def carregar_roi(self):
@@ -199,23 +195,36 @@ class SentinelApp:
     def on_calibrado(self, coords):
         self.roi = coords
         self.root.deiconify()
+        self.lbl_dimensoes.config(text=f"IMAGEM DA LEITURA ({coords['width']}x{coords['height']} px):")
         self.render_preview()
+
+    def processar_imagem_preview(self, shot):
+        """Converte o shot mantendo a proporção correta com altura de até 100px"""
+        img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+        w_orig, h_orig = img.size
+
+        # Redimensiona proporcionalmente para caber na moldura de 420x100
+        fator_w = 420 / w_orig
+        fator_h = 100 / h_orig
+        fator = min(fator_w, fator_h, 3.0) # Permite zoom de até 3x se a caixa for pequena
+
+        novo_w = max(int(w_orig * fator), 50)
+        novo_h = max(int(h_orig * fator), 40)
+
+        img_redim = img.resize((novo_w, novo_h), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(img_redim)
 
     def render_preview(self):
         if not self.roi: return
         try:
             shot = self.sct.grab(self.roi)
-            img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-            # Zoom ampliado para 410x90 com excelente nitidez
-            img = img.resize((410, 90), Image.Resampling.LANCZOS)
-            tk_img = ImageTk.PhotoImage(img)
+            tk_img = self.processar_imagem_preview(shot)
             self.lbl_img.config(image=tk_img, text="")
             self.lbl_img.image = tk_img
         except Exception:
             pass
 
     def atualizar_preview_loop(self):
-        # Atualiza a detecção do ativo continuamente
         novo_ativo = detectar_ativo_tradingview()
         if novo_ativo != self.ativo:
             self.ativo = novo_ativo
@@ -246,7 +255,6 @@ class SentinelApp:
 
         while self.running:
             try:
-                # Atualiza dinamicamente o ativo durante a execução
                 self.ativo = detectar_ativo_tradingview()
                 self.lbl_ativo.config(text=f"Ativo Detectado: {self.ativo}")
 
@@ -254,14 +262,12 @@ class SentinelApp:
                 frame = np.array(shot)
                 frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-                # Renderiza a imagem ampliada na tela da Sentinela
-                img_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                img_pil = Image.fromarray(img_rgb).resize((410, 90), Image.Resampling.LANCZOS)
-                tk_img = ImageTk.PhotoImage(img_pil)
+                # Atualiza a tela com proporção preservada
+                tk_img = self.processar_imagem_preview(shot)
                 self.lbl_img.config(image=tk_img, text="")
                 self.lbl_img.image = tk_img
 
-                # Análise HSV de cores
+                # Análise HSV
                 hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
                 mask_green = cv2.inRange(hsv, np.array([40, 150, 150]), np.array([80, 255, 255]))
                 mask_red = cv2.inRange(hsv, np.array([0, 150, 150]), np.array([10, 255, 255]))
@@ -279,7 +285,7 @@ class SentinelApp:
 
                 self.lbl_estado.config(text=f"Estado: {estado_atual}")
 
-                # Heartbeat de 2 em 2 segundos para o Supabase e PWA
+                # Heartbeat de 2 em 2 segundos
                 agora = time.time()
                 if agora - last_hb >= 2.0:
                     last_hb = agora
@@ -293,7 +299,7 @@ class SentinelApp:
                     except Exception:
                         pass
 
-                # Disparo ao detectar nova oportunidade
+                # Disparo de Novo Trade
                 if estado_atual != last_state:
                     if estado_atual in ["BUY", "SELL"]:
                         cor = "#34d399" if estado_atual == "BUY" else "#f87171"
