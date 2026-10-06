@@ -1,0 +1,18 @@
+# Ignorar dependências do Node.js em qualquer pasta
+node_modules/
+*/node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Ignorar ambientes virtuais do Python
+venv/
+*/venv/
+env/
+__pycache__/
+*.pyc
+
+# Ignorar arquivos de sistema e logs
+.DS_Store
+Thumbs.db
+*.log
