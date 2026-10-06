@@ -178,8 +178,8 @@ export default function App() {
             <div>
               <span className="text-[11px] text-slate-400 font-mono uppercase tracking-wider block">Ativo em Foco</span>
               <strong className="text-sm font-bold text-purple-300">
-                MNQ1! (NASDAQ)
-              </strong>
+  {sentinel.monitored_symbol || 'AGUARDANDO ATIVO...'}
+</strong>
             </div>
           </div>
           <span className="text-[10px] bg-slate-800/80 px-2.5 py-1 rounded-md text-slate-400 font-mono">M1 Scalp</span>
