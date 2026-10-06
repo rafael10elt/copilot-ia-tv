@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { 
   Volume2, VolumeX, ShieldAlert, ArrowUpRight, ArrowDownRight, 
-  Zap, CheckCircle2, Eye, Activity, Trash2, Clock, Play
+  Zap, CheckCircle2, Eye, Activity, Trash2, Clock, Play, AlertTriangle, X
 } from 'lucide-react';
 
 const SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co";
@@ -14,6 +14,7 @@ export default function App() {
   const [activeSignal, setActiveSignal] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [sentinel, setSentinel] = useState({ is_online: false, current_state: 'DESCONECTADO', last_seen: null, monitored_symbol: 'BTCUSD' });
+  const [showClearModal, setShowClearModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const audioContextRef = useRef(null);
 
@@ -77,13 +78,10 @@ export default function App() {
     }
   };
 
-  // Limpa tudo da tela e do Supabase
-  const handleClearAllSignals = async () => {
-    if (!window.confirm("Deseja apagar todos os sinais registrados na sessão?")) return;
-    
+  // Execução da exclusão no banco e tela
+  const confirmClearAllSignals = async () => {
     setIsDeleting(true);
     try {
-      // Deleta todos os registros com ID maior que 0
       await supabase.from('lumi_signals').delete().gt('id', 0);
       setSignals([]);
       setActiveSignal(null);
@@ -91,12 +89,11 @@ export default function App() {
       console.error("Erro ao deletar sinais:", err);
     } finally {
       setIsDeleting(false);
+      setShowClearModal(false);
     }
   };
 
-  // Carrega dados iniciais e escuta realtime
   useEffect(() => {
-    // Busca até 50 registros do dia
     supabase.from('lumi_signals').select('*').order('created_at', { ascending: false }).limit(50)
       .then(r => r.data && setSignals(r.data));
 
@@ -130,12 +127,11 @@ export default function App() {
     };
   }, [soundEnabled]);
 
-  // Contadores da sessão
   const countBuy = signals.filter(s => s.direction === 'BUY').length;
   const countSell = signals.filter(s => s.direction === 'SELL').length;
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col items-center p-4 md:p-8 font-sans antialiased">
+    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col items-center p-4 md:p-8 font-sans antialiased relative">
       
       {/* HEADER */}
       <header className="w-full max-w-4xl flex flex-col sm:flex-row justify-between items-center bg-[#0d1527] border border-slate-800 rounded-2xl p-5 mb-6 shadow-2xl gap-4">
@@ -152,7 +148,6 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Teste Rápido de Áudio */}
           {soundEnabled && (
             <button
               onClick={() => playAlertSound('BUY')}
@@ -271,7 +266,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Placar de Compras e Vendas */}
             {signals.length > 0 && (
               <div className="flex items-center gap-2 text-[11px] font-mono mr-2">
                 <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">
@@ -283,14 +277,11 @@ export default function App() {
               </div>
             )}
 
-            {/* Botão de Limpar Tudo */}
             {signals.length > 0 && (
               <button
-                onClick={handleClearAllSignals}
-                disabled={isDeleting}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 rounded-lg text-xs font-semibold transition-all">
-                <Trash2 size={13} />
-                {isDeleting ? "Limpando..." : "Limpar Tudo"}
+                onClick={() => setShowClearModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 rounded-lg text-xs font-semibold transition-all shadow-sm">
+                <Trash2 size={13} /> Limpar Tudo
               </button>
             )}
           </div>
@@ -301,11 +292,10 @@ export default function App() {
             Nenhuma oportunidade registrada ainda hoje.<br />Deixe o TradingView aberto e execute o <strong>sentinel.py</strong> no seu computador.
           </div>
         ) : (
-          /* Container com altura máxima para 10 itens e barra de rolagem */
           <div className="max-h-[500px] overflow-y-auto pr-1 space-y-2.5 select-none scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
             {signals.map((s) => {
               const idadeMinutos = (Date.now() - new Date(s.created_at).getTime()) / 60000;
-              const isExpirado = idadeMinutos > 5; // Sinal antigo com mais de 5 minutos
+              const isExpirado = idadeMinutos > 5;
 
               return (
                 <div 
@@ -341,6 +331,55 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* MODAL INSTITUCIONAL DE CONFIRMAÇÃO (Limpar Histórico) */}
+      {showClearModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#0d1527] border border-slate-800 rounded-2xl p-6 shadow-2xl relative animate-in fade-in duration-200">
+            {/* Botão Fechar X */}
+            <button 
+              onClick={() => setShowClearModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-all">
+              <X size={18} />
+            </button>
+
+            {/* Cabeçalho do Modal */}
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-white">Limpar Histórico do Pregão</h4>
+                <p className="text-xs text-slate-400 font-mono">Ação destrutiva no banco Supabase</p>
+              </div>
+            </div>
+
+            {/* Mensagem */}
+            <p className="text-xs text-slate-300 leading-relaxed mb-6 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+              Tem certeza de que deseja apagar todos os sinais registrados hoje? Esta ação removerá os registros da nuvem e zerará o placar da sessão.
+            </p>
+
+            {/* Ações */}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowClearModal(false)}
+                disabled={isDeleting}
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
+                Cancelar
+              </button>
+
+              <button
+                onClick={confirmClearAllSignals}
+                disabled={isDeleting}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-950/50 transition-all flex items-center gap-2">
+                <Trash2 size={14} />
+                {isDeleting ? "Apagando..." : "Sim, Limpar Tudo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
