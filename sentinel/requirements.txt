@@ -1,0 +1,6 @@
+mss==9.0.1
+opencv-python==4.9.0.80
+numpy==1.26.4
+supabase==2.4.0
+pyautogui==0.9.54
+pillow==10.2.0
