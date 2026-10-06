@@ -18,8 +18,13 @@ export default function App() {
   const [isDeleting, setIsDeleting] = useState(false);
   const audioContextRef = useRef(null);
 
-  // Inicializa contexto de áudio
-  const enableSoundAndNotifications = async () => {
+  // Alterna entre Armar e Desarmar som/notificações
+  const toggleSoundAndNotifications = async () => {
+    if (soundEnabled) {
+      setSoundEnabled(false);
+      return;
+    }
+
     try {
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -38,7 +43,7 @@ export default function App() {
     }
   };
 
-  // Sintetizador Nativo
+  // Sintetizador Nativo de Áudio
   const playAlertSound = (type) => {
     if (!audioContextRef.current) return;
     try {
@@ -78,7 +83,7 @@ export default function App() {
     }
   };
 
-  // Execução da exclusão no banco e tela
+  // Limpa tudo do Supabase e da tela
   const confirmClearAllSignals = async () => {
     setIsDeleting(true);
     try {
@@ -105,8 +110,12 @@ export default function App() {
         const s = payload.new;
         setSignals(prev => [s, ...prev]);
         setActiveSignal(s);
-        if (soundEnabled) playAlertSound(s.direction);
-        triggerNotification(s);
+        
+        // Só toca som e dispara notificação se estiver ARMADO
+        if (soundEnabled) {
+          playAlertSound(s.direction);
+          triggerNotification(s);
+        }
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sentinel_status' }, payload => {
         setSentinel(payload.new);
@@ -131,143 +140,151 @@ export default function App() {
   const countSell = signals.filter(s => s.direction === 'SELL').length;
 
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col items-center p-4 md:p-8 font-sans antialiased relative">
+    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col items-center px-3 py-4 sm:p-6 md:p-8 font-sans antialiased relative">
       
-      {/* HEADER */}
-      <header className="w-full max-w-4xl flex flex-col sm:flex-row justify-between items-center bg-[#0d1527] border border-slate-800 rounded-2xl p-5 mb-6 shadow-2xl gap-4">
-        <div className="flex items-center gap-3.5">
-          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400">
-            <Zap size={24} />
+      {/* HEADER RESPONSIVO */}
+      <header className="w-full max-w-4xl flex flex-col sm:flex-row justify-between items-stretch sm:items-center bg-[#0d1527] border border-slate-800 rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6 shadow-2xl gap-3.5">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 sm:p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 shrink-0">
+            <Zap size={22} />
           </div>
-          <div>
-            <h1 className="text-lg font-bold tracking-wide flex items-center gap-2">
-              LUMI COPILOT <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono uppercase">Visão Sentinela</span>
-            </h1>
-            <p className="text-xs text-slate-400">TradingView Monitor • Lumitrader</p>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-base sm:text-lg font-bold tracking-wide truncate">LUMI COPILOT</h1>
+              <span className="text-[9px] sm:text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono uppercase tracking-wider">
+                SENTINEL
+              </span>
+            </div>
+            <p className="text-[11px] sm:text-xs text-slate-400 truncate">TradingView Monitor • Lumitrader</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* BOTÕES DE CONTROLE */}
+        <div className="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/80">
           {soundEnabled && (
             <button
               onClick={() => playAlertSound('BUY')}
               title="Testar Som"
-              className="px-3 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5 transition-all">
+              className="px-3 py-2 sm:py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center justify-center gap-1.5 transition-all shrink-0">
               <Play size={13} className="text-emerald-400" /> Testar
             </button>
           )}
 
           <button
-            onClick={enableSoundAndNotifications}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg ${
+            onClick={toggleSoundAndNotifications}
+            className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 sm:py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg ${
               soundEnabled 
-                ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 shadow-emerald-950/40' 
-                : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-950/60 animate-pulse'
+                ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/30' 
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
             }`}>
-            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-            {soundEnabled ? 'SOM & ALERTAS ARMADOS' : 'CLIQUE PARA ARMAR SOM'}
+            {soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
+            <span>{soundEnabled ? 'ARMADO (DESARMAR)' : 'DESARMADO (ARMAR)'}</span>
           </button>
         </div>
       </header>
 
-      {/* STATUS CARDS */}
-      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-[#0d1527] border border-slate-800/80 p-5 rounded-2xl flex items-center justify-between shadow-xl">
-          <div className="flex items-center gap-3.5">
-            <div className={`p-2.5 rounded-xl ${sentinel.is_online ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
-              <Eye size={22} />
+      {/* STATUS CARDS RESPONSIVOS (Compactos no Mobile, Espaçosos no Desktop) */}
+      <div className="w-full max-w-4xl grid grid-cols-3 gap-2 sm:gap-4 mb-4 sm:mb-6">
+        
+        {/* Sentinela Local */}
+        <div className="bg-[#0d1527] border border-slate-800/80 p-3 sm:p-5 rounded-xl sm:rounded-2xl flex flex-col sm:flex-row items-center sm:justify-between text-center sm:text-left shadow-xl gap-1 sm:gap-3">
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3.5 min-w-0">
+            <div className={`p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl shrink-0 ${sentinel.is_online ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
+              <Eye size={18} className="sm:w-[22px] sm:h-[22px]" />
             </div>
-            <div>
-              <span className="text-[11px] text-slate-400 font-mono uppercase tracking-wider block">Sentinela Local</span>
-              <strong className={`text-sm font-bold ${sentinel.is_online ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {sentinel.is_online ? 'ONLINE (LENDO TELA)' : 'DESCONECTADO'}
+            <div className="min-w-0">
+              <span className="text-[9px] sm:text-[11px] text-slate-400 font-mono uppercase tracking-wider block truncate">Sentinela</span>
+              <strong className={`text-[11px] sm:text-sm font-bold truncate block ${sentinel.is_online ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {sentinel.is_online ? 'ONLINE' : 'OFFLINE'}
               </strong>
             </div>
           </div>
-          <span className={`w-3 h-3 rounded-full ${sentinel.is_online ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'}`} />
+          <span className={`hidden sm:inline-block w-2.5 h-2.5 rounded-full ${sentinel.is_online ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'}`} />
         </div>
 
-        <div className="bg-[#0d1527] border border-slate-800/80 p-5 rounded-2xl flex items-center justify-between shadow-xl">
-          <div className="flex items-center gap-3.5">
-            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
-              <Activity size={22} />
+        {/* Estado no Gráfico */}
+        <div className="bg-[#0d1527] border border-slate-800/80 p-3 sm:p-5 rounded-xl sm:rounded-2xl flex flex-col sm:flex-row items-center sm:justify-between text-center sm:text-left shadow-xl gap-1 sm:gap-3">
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3.5 min-w-0">
+            <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+              <Activity size={18} className="sm:w-[22px] sm:h-[22px]" />
             </div>
-            <div>
-              <span className="text-[11px] text-slate-400 font-mono uppercase tracking-wider block">Estado no Gráfico</span>
-              <strong className="text-sm font-bold text-white font-mono">
+            <div className="min-w-0">
+              <span className="text-[9px] sm:text-[11px] text-slate-400 font-mono uppercase tracking-wider block truncate">Estado</span>
+              <strong className="text-[11px] sm:text-sm font-bold text-white font-mono truncate block">
                 {sentinel.current_state}
               </strong>
             </div>
           </div>
-          <span className="text-[11px] text-slate-500 font-mono">~3 checks/s</span>
+          <span className="hidden sm:inline-block text-[11px] text-slate-500 font-mono">~3/s</span>
         </div>
 
-        <div className="bg-[#0d1527] border border-slate-800/80 p-5 rounded-2xl flex items-center justify-between shadow-xl">
-          <div className="flex items-center gap-3.5">
-            <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-              <ShieldAlert size={22} />
+        {/* Ativo em Foco */}
+        <div className="bg-[#0d1527] border border-slate-800/80 p-3 sm:p-5 rounded-xl sm:rounded-2xl flex flex-col sm:flex-row items-center sm:justify-between text-center sm:text-left shadow-xl gap-1 sm:gap-3">
+          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3.5 min-w-0">
+            <div className="p-1.5 sm:p-2.5 rounded-lg sm:rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 shrink-0">
+              <ShieldAlert size={18} className="sm:w-[22px] sm:h-[22px]" />
             </div>
-            <div>
-              <span className="text-[11px] text-slate-400 font-mono uppercase tracking-wider block">Ativo em Foco</span>
-              <strong className="text-sm font-bold text-purple-300">
+            <div className="min-w-0">
+              <span className="text-[9px] sm:text-[11px] text-slate-400 font-mono uppercase tracking-wider block truncate">Ativo</span>
+              <strong className="text-[11px] sm:text-sm font-bold text-purple-300 truncate block">
                 {sentinel.monitored_symbol || 'BTCUSD'}
               </strong>
             </div>
           </div>
-          <span className="text-[10px] bg-slate-800/80 px-2.5 py-1 rounded-md text-slate-400 font-mono">M1 Scalp</span>
+          <span className="hidden sm:inline-block text-[10px] bg-slate-800/80 px-2 py-0.5 rounded text-slate-400 font-mono">M1</span>
         </div>
+
       </div>
 
       {/* POPUP DE ALERTA DE TRADE ATIVO */}
       {activeSignal && (
-        <div className="w-full max-w-4xl mb-6 animate-pulse">
-          <div className={`p-6 rounded-2xl border-2 flex flex-col md:flex-row justify-between items-center gap-4 shadow-2xl ${
+        <div className="w-full max-w-4xl mb-4 sm:mb-6 animate-pulse">
+          <div className={`p-4 sm:p-6 rounded-2xl border-2 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 sm:gap-4 shadow-2xl ${
             activeSignal.direction === 'BUY'
               ? 'bg-emerald-950/80 border-emerald-500 shadow-emerald-950/80'
               : 'bg-rose-950/80 border-rose-500 shadow-rose-950/80'
           }`}>
-            <div className="flex items-center gap-4">
-              <div className={`p-3.5 rounded-2xl font-black text-2xl flex items-center gap-1 ${
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl font-black text-xl sm:text-2xl flex items-center justify-center shrink-0 ${
                 activeSignal.direction === 'BUY' ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'
               }`}>
-                {activeSignal.direction === 'BUY' ? <ArrowUpRight size={32} /> : <ArrowDownRight size={32} />}
-                {activeSignal.direction}
+                {activeSignal.direction === 'BUY' ? <ArrowUpRight size={24} className="sm:w-8 sm:h-8" /> : <ArrowDownRight size={24} className="sm:w-8 sm:h-8" />}
               </div>
-              <div>
-                <span className="text-xs text-amber-300 font-bold uppercase tracking-widest font-mono">
-                  Gatilho Confirmado no TradingView
+              <div className="min-w-0">
+                <span className="text-[10px] sm:text-xs text-amber-300 font-bold uppercase tracking-widest font-mono block">
+                  Gatilho Confirmado no TV
                 </span>
-                <h2 className="text-2xl font-black text-white mt-0.5">{activeSignal.symbol}</h2>
-                <p className="text-xs text-slate-200 mt-0.5">{activeSignal.info}</p>
+                <h2 className="text-xl sm:text-2xl font-black text-white truncate">{activeSignal.symbol}</h2>
+                <p className="text-[11px] sm:text-xs text-slate-200 truncate">{activeSignal.info}</p>
               </div>
             </div>
 
             <button
               onClick={() => setActiveSignal(null)}
-              className="px-6 py-3 bg-white text-slate-950 font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center gap-2 shadow-lg">
-              <CheckCircle2 size={16} /> CIENTE (DESARMAR POPUP)
+              className="w-full sm:w-auto px-5 py-2.5 sm:py-3 bg-white text-slate-950 font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2 shadow-lg">
+              <CheckCircle2 size={16} /> CIENTE
             </button>
           </div>
         </div>
       )}
 
-      {/* HISTÓRICO COM SCROLLBAR & BOTÃO DE LIMPEZA */}
-      <main className="w-full max-w-4xl bg-[#0d1527] border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-800/80">
-          <div className="flex items-center gap-3">
+      {/* HISTÓRICO RESPONSIVO */}
+      <main className="w-full max-w-4xl bg-[#0d1527] border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pb-3 border-b border-slate-800/80 gap-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-xs font-bold text-slate-300 uppercase tracking-widest flex items-center gap-2">
-              <ShieldAlert size={16} className="text-blue-400" /> Sinais Detectados na Sessão
+              <ShieldAlert size={15} className="text-blue-400 shrink-0" /> Sinais da Sessão
             </h3>
             {signals.length > 0 && (
-              <span className="text-[11px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-md font-mono">
-                {signals.length} {signals.length === 1 ? 'registro' : 'registros'}
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">
+                {signals.length}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between w-full sm:w-auto gap-2">
             {signals.length > 0 && (
-              <div className="flex items-center gap-2 text-[11px] font-mono mr-2">
+              <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-mono">
                 <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">
                   BUY: {countBuy}
                 </span>
@@ -280,19 +297,19 @@ export default function App() {
             {signals.length > 0 && (
               <button
                 onClick={() => setShowClearModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 rounded-lg text-xs font-semibold transition-all shadow-sm">
-                <Trash2 size={13} /> Limpar Tudo
+                className="flex items-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/60 rounded-lg text-xs font-semibold transition-all">
+                <Trash2 size={13} /> Limpar
               </button>
             )}
           </div>
         </div>
 
         {signals.length === 0 ? (
-          <div className="py-12 text-center text-slate-500 text-xs">
-            Nenhuma oportunidade registrada ainda hoje.<br />Deixe o TradingView aberto e execute o <strong>sentinel.py</strong> no seu computador.
+          <div className="py-10 text-center text-slate-500 text-xs">
+            Nenhuma oportunidade registrada ainda hoje.<br />Mantenha o TradingView e a Sentinela ativos.
           </div>
         ) : (
-          <div className="max-h-[500px] overflow-y-auto pr-1 space-y-2.5 select-none scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+          <div className="max-h-[460px] overflow-y-auto pr-1 space-y-2 select-none scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
             {signals.map((s) => {
               const idadeMinutos = (Date.now() - new Date(s.created_at).getTime()) / 60000;
               const isExpirado = idadeMinutos > 5;
@@ -300,29 +317,29 @@ export default function App() {
               return (
                 <div 
                   key={s.id} 
-                  className={`flex justify-between items-center bg-[#070b14] border p-3.5 rounded-xl font-mono text-xs transition-all ${
+                  className={`flex justify-between items-center bg-[#070b14] border p-3 rounded-xl font-mono text-xs transition-all ${
                     isExpirado 
                       ? 'border-slate-800/40 opacity-55' 
                       : 'border-slate-800/90 hover:border-slate-700'
                   }`}>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-2.5 py-1 rounded-lg font-black text-xs ${
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`px-2 py-0.5 rounded font-black text-[11px] shrink-0 ${
                       s.direction === 'BUY' 
                         ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
                         : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                     }`}>
                       {s.direction}
                     </span>
-                    <span className="text-white font-bold">{s.symbol}</span>
+                    <span className="text-white font-bold truncate">{s.symbol}</span>
                     {isExpirado && (
-                      <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
+                      <span className="text-[9px] text-slate-500 bg-slate-900 px-1 py-0.5 rounded border border-slate-800 shrink-0">
                         EXPIRADO
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 text-slate-400 text-xs">
-                    <Clock size={12} className="text-slate-500" />
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[11px] shrink-0">
+                    <Clock size={11} className="text-slate-500" />
                     <span>{new Date(s.created_at).toLocaleTimeString('pt-BR')}</span>
                   </div>
                 </div>
@@ -332,48 +349,44 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAL INSTITUCIONAL DE CONFIRMAÇÃO (Limpar Histórico) */}
+      {/* MODAL DE CONFIRMAÇÃO ELEGANTE */}
       {showClearModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-[#0d1527] border border-slate-800 rounded-2xl p-6 shadow-2xl relative animate-in fade-in duration-200">
-            {/* Botão Fechar X */}
+          <div className="w-full max-w-sm sm:max-w-md bg-[#0d1527] border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in fade-in duration-200">
             <button 
               onClick={() => setShowClearModal(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-white transition-all">
               <X size={18} />
             </button>
 
-            {/* Cabeçalho do Modal */}
-            <div className="flex items-center gap-3.5 mb-4">
-              <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400">
-                <AlertTriangle size={24} />
+            <div className="flex items-center gap-3 mb-3.5">
+              <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 shrink-0">
+                <AlertTriangle size={22} />
               </div>
               <div>
-                <h4 className="text-base font-bold text-white">Limpar Histórico do Pregão</h4>
-                <p className="text-xs text-slate-400 font-mono">Ação destrutiva no banco Supabase</p>
+                <h4 className="text-sm sm:text-base font-bold text-white">Limpar Histórico</h4>
+                <p className="text-[11px] text-slate-400 font-mono">Zerar registros do Supabase</p>
               </div>
             </div>
 
-            {/* Mensagem */}
-            <p className="text-xs text-slate-300 leading-relaxed mb-6 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-              Tem certeza de que deseja apagar todos os sinais registrados hoje? Esta ação removerá os registros da nuvem e zerará o placar da sessão.
+            <p className="text-xs text-slate-300 leading-relaxed mb-5 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+              Deseja apagar todos os registros da sessão de hoje na nuvem?
             </p>
 
-            {/* Ações */}
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-end gap-2.5">
               <button
                 onClick={() => setShowClearModal(false)}
                 disabled={isDeleting}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
                 Cancelar
               </button>
 
               <button
                 onClick={confirmClearAllSignals}
                 disabled={isDeleting}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-950/50 transition-all flex items-center gap-2">
-                <Trash2 size={14} />
-                {isDeleting ? "Apagando..." : "Sim, Limpar Tudo"}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-950/50 transition-all flex items-center gap-1.5">
+                <Trash2 size={13} />
+                {isDeleting ? "Apagando..." : "Confirmar"}
               </button>
             </div>
           </div>
