@@ -1,19 +1,21 @@
-# Ignorar dependências do Node.js em qualquer pasta
+# Node
 node_modules/
-*/node_modules/
+**/node_modules/
 dist/
 dist-ssr/
 *.local
 
-# Ignorar ambientes virtuais do Python
+# Python
 venv/
-*/venv/
+**/venv/
 env/
 __pycache__/
 *.pyc
+.env
 
-# Ignorar arquivos de sistema e logs
+# Logs e sistema
 .DS_Store
 Thumbs.db
 *.log
 repomix-output.xml
+**/repomix-output.xml
