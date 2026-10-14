@@ -14,7 +14,7 @@ import numpy as np
 import cv2
 from supabase import create_client
 
-# 1. ATIVA SUPORTE DPI DO WINDOWS
+# 1. ATIVA SUPORTE DPI DO WINDOWS (PRECISÃO PIXEL-A-PIXEL)
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -40,21 +40,18 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
 def detectar_ativo_tradingview():
     """
-    Busca a janela ativa do TradingView e extrai o ticker que antecede o preco/seta
-    Ex: 'BTCUSD ▼ 85.521,90...' -> BTCUSD
-    Ex: 'USOIL ▼ 89,83...'      -> USOIL
-    Ex: 'XAUUSD ▲ 4.167,100...' -> XAUUSD
+    Varre as janelas ativas em busca de instâncias do TradingView (App Desktop ou Navegador)
+    e identifica com precisão o contrato de NASDAQ ou outros ativos operados.
     """
     if not HAS_WIN32:
-        return None
+        return "MNQ"
 
     candidatos = []
 
     def enum_cb(hwnd, _):
         if win32gui.IsWindowVisible(hwnd):
             tit = win32gui.GetWindowText(hwnd).strip()
-            # Identifica janelas de gráfico do TradingView
-            if tit and any(k in tit for k in ["TradingView", "Lumitrader", "Ouro", "Petróleo", "Bitcoin"]):
+            if tit and any(k in tit for k in ["TradingView", "Lumitrader", "Futures", "Index", "Nasdaq", "CME", "Chrome", "Brave", "Edge"]):
                 candidatos.append(tit)
 
     try:
@@ -63,25 +60,50 @@ def detectar_ativo_tradingview():
         pass
 
     for tit in candidatos:
-        # Pega a primeira palavra alfanumerica do titulo
-        m = re.match(r"^([A-Z0-9!._]{2,10})", tit)
-        if m:
-            candidato = m.group(1).upper()
-            if candidato not in ["TRADINGVIEW", "CHROME", "EDGE", "BRAVE", "LUMITRADER"]:
-                return candidato
+        tit_upper = tit.upper()
 
-    return None
+        # 1. Detecção Especializada de Família NASDAQ (Futuros / CFDs)
+        if "MICRO E-MINI NASDAQ" in tit_upper or "MNQ" in tit_upper:
+            # Tenta pegar código do contrato específico (ex: MNQZ2026, MNQ1!)
+            m = re.search(r"\b(MNQ[A-Z0-9!]{1,6})\b", tit_upper)
+            return m.group(1) if m else "MNQ"
+
+        if "E-MINI NASDAQ" in tit_upper or "NQ1!" in tit_upper or re.search(r"\bNQ[A-Z0-9!]{1,5}\b", tit_upper):
+            m = re.search(r"\b(NQ[A-Z0-9!]{1,6})\b", tit_upper)
+            return m.group(1) if m else "NQ"
+
+        if any(alias in tit_upper for alias in ["NAS100", "USTEC", "US100", "QQQ"]):
+            for alias in ["NAS100", "USTEC", "US100", "QQQ"]:
+                if alias in tit_upper:
+                    return alias
+
+        # 2. Outros Ativos Tradicionais
+        if "XAUUSD" in tit_upper or "GOLD" in tit_upper or "OURO" in tit_upper:
+            return "XAUUSD"
+        if "BTCUSD" in tit_upper or "BITCOIN" in tit_upper:
+            return "BTCUSD"
+        if "USOIL" in tit_upper or "WTI" in tit_upper or "PETRÓLEO" in tit_upper:
+            return "USOIL"
+
+        # 3. Fallback Genérico para tickers padronizados no início do título
+        m_generic = re.match(r"^([A-Z0-9!._]{2,8})\s+[·\-—]", tit)
+        if m_generic:
+            cand = m_generic.group(1).upper()
+            if cand not in ["TRADINGVIEW", "CHROME", "EDGE", "BRAVE", "LUMITRADER", "MICRO"]:
+                return cand
+
+    return "MNQ"
 
 
 class FullscreenCalibrator:
     def __init__(self, parent_gui):
         self.parent = parent_gui
         self.top = tk.Toplevel()
-        
+
         user32 = ctypes.windll.user32
         sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
         self.top.geometry(f"{sw}x{sh}+0+0")
-        
+
         self.top.attributes('-alpha', 0.28)
         self.top.attributes('-fullscreen', True)
         self.top.attributes('-topmost', True)
@@ -102,10 +124,15 @@ class FullscreenCalibrator:
     def on_press(self, e):
         self.start_x = e.x_root
         self.start_y = e.y_root
-        self.rect = self.canvas.create_rectangle(e.x, e.y, e.x, e.y, outline='#f43f5e', width=3)
+        self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1, outline='#f43f5e', width=3)
+
+    @property
+    def x(self): return self.start_x
+    @property
+    def y(self): return self.start_y
 
     def on_drag(self, e):
-        self.canvas.coords(self.rect, self.start_x, self.start_y, e.x, e.y)
+        self.canvas.coords(self.rect, self.start_x, self.start_y, e.x_root, e.y_root)
 
     def on_release(self, e):
         x1, x2 = min(self.start_x, e.x_root), max(self.start_x, e.x_root)
@@ -113,8 +140,8 @@ class FullscreenCalibrator:
 
         coords = {"left": int(x1), "top": int(y1), "width": int(x2 - x1), "height": int(y2 - y1)}
         self.top.destroy()
-        
-        if coords["width"] > 20 and coords["height"] > 10:
+
+        if coords["width"] > 15 and coords["height"] > 10:
             with open(CONFIG_FILE, "w") as f:
                 json.dump(coords, f, indent=4)
             self.parent.on_calibrado(coords)
@@ -129,15 +156,15 @@ class FullscreenCalibrator:
 class SentinelApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Lumi Sentinel • TradingView Desk")
-        self.root.geometry("460x610")
+        self.root.title("Lumi Sentinel • Prop Desk Monitor")
+        self.root.geometry("460x620")
         self.root.configure(bg="#070b14")
         self.root.attributes('-topmost', True)
 
         self.running = False
         self.sct = mss.mss()
         self.roi = None
-        self.ativo_atual = "BTCUSD"
+        self.ativo_atual = "MNQ"
         self.auto_detect = True
         self.carregar_roi()
 
@@ -158,19 +185,19 @@ class SentinelApp:
         self.box_img.pack(fill="x", pady=(5, 12))
         self.box_img.pack_propagate(False)
 
-        self.lbl_img = tk.Label(self.box_img, bg="#020617", text="Clique em CALIBRAR", fg="#64748b", font=("Segoe UI", 9))
+        self.lbl_img = tk.Label(self.box_img, bg="#020617", text="Selecione a célula de Status (CALIBRAR)", fg="#64748b", font=("Segoe UI", 9))
         self.lbl_img.pack(fill="both", expand=True)
 
         info = tk.Frame(main, bg="#0d1527", padx=14, pady=10)
         info.pack(fill="x", pady=(0, 15))
 
-        # PAINEL DO ATIVO (DINÂMICO COM SELETOR AUTO/MANUAL)
+        # PAINEL DO ATIVO (DINÂMICO)
         ativo_frame = tk.Frame(info, bg="#0d1527")
         ativo_frame.pack(fill="x")
-        
+
         tk.Label(ativo_frame, text="Ativo Monitorado:", font=("Segoe UI", 9, "bold"), fg="#94a3b8", bg="#0d1527").pack(side="left")
-        
-        self.lbl_ativo_display = tk.Label(ativo_frame, text="BTCUSD", font=("Segoe UI", 11, "bold"), fg="#c084fc", bg="#0d1527")
+
+        self.lbl_ativo_display = tk.Label(ativo_frame, text=self.ativo_atual, font=("Segoe UI", 11, "bold"), fg="#c084fc", bg="#0d1527")
         self.lbl_ativo_display.pack(side="left", padx=8)
 
         self.btn_modo_ativo = tk.Button(ativo_frame, text="[MODO AUTO: ATIVO]", font=("Segoe UI", 8, "bold"), bg="#1e293b", fg="#34d399", relief="flat", padx=6, pady=1, command=self.toggle_modo_ativo)
@@ -183,13 +210,13 @@ class SentinelApp:
         self.lbl_gatilho.pack(anchor="w", pady=(2, 0))
 
         # BOTÕES DE AÇÃO
-        self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR ÁREA (RECORTE)", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=10, command=self.calibrar, cursor="hand2")
+        self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR CÉLULA DE STATUS", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=10, command=self.calibrar, cursor="hand2")
         self.btn_calib.pack(fill="x", pady=(0, 8))
 
         self.btn_run = tk.Button(main, text="▶️ 2. INICIAR SENTINELA", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", pady=10, command=self.toggle_run, cursor="hand2")
         self.btn_run.pack(fill="x")
 
-        # Inicia loop global de atualização
+        # Inicia loop global de atualização da GUI
         self.root.after(300, self.atualizar_preview_loop)
 
     def toggle_modo_ativo(self):
@@ -197,7 +224,7 @@ class SentinelApp:
         if self.auto_detect:
             self.btn_modo_ativo.config(text="[MODO AUTO: ATIVO]", fg="#34d399")
         else:
-            self.btn_modo_ativo.config(text="[MODO AUTO: PAUSADO]", fg="#f87171")
+            self.btn_modo_ativo.config(text="[MODO AUTO: MANUAL]", fg="#f87171")
 
     def carregar_roi(self):
         if os.path.exists(CONFIG_FILE):
@@ -239,7 +266,7 @@ class SentinelApp:
             pass
 
     def checar_ativo_em_tempo_real(self):
-        """Atualiza o ativo da tela sem travar a interface"""
+        """Atualiza o ativo da tela sem engasgar o loop"""
         if self.auto_detect:
             novo = detectar_ativo_tradingview()
             if novo and novo != self.ativo_atual:
@@ -248,16 +275,14 @@ class SentinelApp:
 
     def atualizar_preview_loop(self):
         self.checar_ativo_em_tempo_real()
-
         if self.roi and not self.running:
             self.render_preview()
-
         self.root.after(800, self.atualizar_preview_loop)
 
     def toggle_run(self):
         if not self.running:
             if not self.roi:
-                messagebox.showwarning("Aviso", "Calibre a área primeiro!")
+                messagebox.showwarning("Aviso", "Calibre a área de status primeiro!")
                 return
             self.running = True
             self.lbl_status.config(text="🟢 VIGIANDO TELA", fg="#34d399")
@@ -269,23 +294,33 @@ class SentinelApp:
             self.btn_run.config(text="▶️ INICIAR SENTINELA", bg="#10b981")
 
     def classificar_estado(self, frame_bgr):
+        """
+        Classificação robusta baseada em densidade percentual de cores.
+        Otimizada para o novo painel sólido do Pine Script.
+        """
         hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+        total_pixels = frame_bgr.shape[0] * frame_bgr.shape[1]
+        if total_pixels == 0:
+            return "AGUARDANDO FVG"
 
-        # Vermelho (SELL)
-        mask_red1 = cv2.inRange(hsv, np.array([0, 100, 80]), np.array([12, 255, 255]))
-        mask_red2 = cv2.inRange(hsv, np.array([168, 100, 80]), np.array([180, 255, 255]))
+        # Máscaras de Vermelho (SELL)
+        mask_red1 = cv2.inRange(hsv, np.array([0, 110, 70]), np.array([12, 255, 255]))
+        mask_red2 = cv2.inRange(hsv, np.array([168, 110, 70]), np.array([180, 255, 255]))
         mask_red = mask_red1 | mask_red2
 
-        # Verde (BUY)
-        mask_green = cv2.inRange(hsv, np.array([36, 100, 80]), np.array([86, 255, 255]))
+        # Máscara de Verde (BUY)
+        mask_green = cv2.inRange(hsv, np.array([35, 110, 70]), np.array([85, 255, 255]))
 
         red_count = cv2.countNonZero(mask_red)
         green_count = cv2.countNonZero(mask_green)
-        threshold = 40
 
-        if red_count > threshold and red_count > (green_count * 1.2):
+        pct_red = red_count / total_pixels
+        pct_green = green_count / total_pixels
+
+        # Limiar de densidade (pelo menos 12% da área com a cor do gatilho)
+        if pct_red > 0.12 and pct_red > (pct_green * 1.5):
             return "SELL"
-        elif green_count > threshold and green_count > (red_count * 1.2):
+        elif pct_green > 0.12 and pct_green > (pct_red * 1.5):
             return "BUY"
 
         return "AGUARDANDO FVG"
@@ -296,7 +331,6 @@ class SentinelApp:
 
         while self.running:
             try:
-                # DETECÇÃO CONTÍNUA: Atualiza o ativo mesmo durante o pregão ativo
                 self.checar_ativo_em_tempo_real()
 
                 shot = self.sct.grab(self.roi)
@@ -310,7 +344,7 @@ class SentinelApp:
                 estado_atual = self.classificar_estado(frame_bgr)
                 self.lbl_estado.config(text=f"Estado: {estado_atual}")
 
-                # Heartbeat a cada 2 seg sincronizando o ativo detectado
+                # Heartbeat de status no Supabase a cada 2 seg
                 agora = time.time()
                 if agora - last_hb >= 2.0:
                     last_hb = agora
@@ -324,7 +358,7 @@ class SentinelApp:
                     except Exception:
                         pass
 
-                # Disparo de Novo Trade
+                # Disparo de Novo Trade na Mudança de Estado
                 if estado_atual != last_state:
                     if estado_atual in ["BUY", "SELL"]:
                         cor = "#34d399" if estado_atual == "BUY" else "#f87171"

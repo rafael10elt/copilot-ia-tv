@@ -13,38 +13,33 @@ export default function App() {
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const [sentinel, setSentinel] = useState({ is_online: false, current_state: 'DESCONECTADO', last_seen: null, monitored_symbol: 'BTCUSD' });
+  const [sentinel, setSentinel] = useState({ 
+    is_online: false, 
+    current_state: 'DESCONECTADO', 
+    last_seen: null, 
+    monitored_symbol: 'MNQ' 
+  });
   const [showClearModal, setShowClearModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Referências de Áudio e Temporizadores
   const audioContextRef = useRef(null);
+  const alarmIntervalRef = useRef(null);
+  const alarmTimeoutRef = useRef(null);
 
-  // Alterna entre Armar e Desarmar som/notificações
-  const toggleSoundAndNotifications = async () => {
-    if (soundEnabled) {
-      setSoundEnabled(false);
-      return;
+  // Inicialização segura do AudioContext no clique do usuário
+  const ensureAudioContext = async () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
-
-    try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-      setSoundEnabled(true);
-
-      if ('Notification' in window) {
-        await Notification.requestPermission();
-      }
-      playAlertSound('BUY');
-    } catch (e) {
-      console.error(e);
+    if (audioContextRef.current.state === 'suspended') {
+      await audioContextRef.current.resume();
     }
+    return audioContextRef.current;
   };
 
-  // Sintetizador Nativo de Áudio
-  const playAlertSound = (type) => {
+  // Pulso sonoro de alta frequência (incisivo, penetrante)
+  const triggerAudioPulse = (type) => {
     if (!audioContextRef.current) return;
     try {
       const ctx = audioContextRef.current;
@@ -54,42 +49,118 @@ export default function App() {
       osc.connect(gain);
       gain.connect(ctx.destination);
 
+      const now = ctx.currentTime;
+
       if (type === 'BUY') {
-        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
-        osc.type = 'triangle';
-      } else {
-        osc.frequency.setValueAtTime(659.25, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(329.63, ctx.currentTime + 0.2);
+        // Tom ascendente agressivo (650Hz -> 1050Hz)
         osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(650, now);
+        osc.frequency.exponentialRampToValueAtTime(1050, now + 0.22);
+      } else {
+        // Tom descendente de alerta/sirene (950Hz -> 420Hz)
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(950, now);
+        osc.frequency.exponentialRampToValueAtTime(420, now + 0.22);
       }
 
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      // Ganho incisivo de 0.70 com decaimento limpo
+      gain.gain.setValueAtTime(0.70, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
 
-      osc.start();
-      osc.stop(ctx.currentTime + 0.4);
+      osc.start(now);
+      osc.stop(now + 0.28);
     } catch (err) {
-      console.error(err);
+      console.error("Erro no oscilador de áudio:", err);
     }
   };
 
+  // Interrompe imediatamente qualquer alarme e temporizador ativo
+  const stopAlarm = () => {
+    if (alarmIntervalRef.current) {
+      clearInterval(alarmIntervalRef.current);
+      alarmIntervalRef.current = null;
+    }
+    if (alarmTimeoutRef.current) {
+      clearTimeout(alarmTimeoutRef.current);
+      alarmTimeoutRef.current = null;
+    }
+  };
+
+  // Dispara o alarme em LOOP por até 30 segundos
+  const startAlarm30s = async (type) => {
+    stopAlarm();
+    await ensureAudioContext();
+
+    // Primeiro disparo imediato
+    triggerAudioPulse(type);
+
+    // Loop que repete a cada 600ms (ritmo de sirene institucional)
+    alarmIntervalRef.current = setInterval(() => {
+      triggerAudioPulse(type);
+    }, 600);
+
+    // Auto-corte rigoroso após 30 segundos (30.000 ms)
+    alarmTimeoutRef.current = setTimeout(() => {
+      stopAlarm();
+    }, 30000);
+  };
+
+  // Ação de Reconhecer Trade (Botão CIENTE)
+  const handleAcknowledgeSignal = () => {
+    stopAlarm();
+    setActiveSignal(null);
+  };
+
+  // Alterna Armar / Desarmar Alerta Geral
+  const toggleSoundAndNotifications = async () => {
+    if (soundEnabled) {
+      stopAlarm();
+      setSoundEnabled(false);
+      return;
+    }
+
+    try {
+      await ensureAudioContext();
+      setSoundEnabled(true);
+
+      if ('Notification' in window) {
+        await Notification.requestPermission();
+      }
+
+      // Teste rápido de 1 pulso ao armar
+      triggerAudioPulse('BUY');
+    } catch (e) {
+      console.error("Erro ao ativar som:", e);
+    }
+  };
+
+  // Teste de sirene de 3 segundos
+  const handleTestSound = async () => {
+    stopAlarm();
+    await ensureAudioContext();
+    triggerAudioPulse('BUY');
+    alarmIntervalRef.current = setInterval(() => triggerAudioPulse('BUY'), 600);
+    alarmTimeoutRef.current = setTimeout(() => stopAlarm(), 3000);
+  };
+
+  // Notificação push no navegador
   const triggerNotification = (signal) => {
     if ('Notification' in window && Notification.permission === 'granted') {
       new Notification(`⚡ LUMI COPILOT: ${signal.direction} em ${signal.symbol}`, {
-        body: `Gatilho acionado no TradingView!`,
+        body: `Gatilho acionado no TradingView! FVG Retestado.`,
         icon: 'https://cdn-icons-png.flaticon.com/512/9422/9422977.png'
       });
     }
   };
 
-  // Limpa tudo do Supabase e da tela
+  // Limpar histórico do Supabase
   const confirmClearAllSignals = async () => {
     setIsDeleting(true);
     try {
       await supabase.from('lumi_signals').delete().gt('id', 0);
       setSignals([]);
       setActiveSignal(null);
+      stopAlarm();
     } catch (err) {
       console.error("Erro ao deletar sinais:", err);
     } finally {
@@ -99,21 +170,23 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Carrega últimos 50 sinais
     supabase.from('lumi_signals').select('*').order('created_at', { ascending: false }).limit(50)
       .then(r => r.data && setSignals(r.data));
 
+    // Carrega status da sentinela
     supabase.from('sentinel_status').select('*').eq('id', 1).single()
       .then(r => r.data && setSentinel(r.data));
 
+    // WebSocket Supabase em tempo real
     const channel = supabase.channel('lumi_copilot_sync')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lumi_signals' }, payload => {
         const s = payload.new;
         setSignals(prev => [s, ...prev]);
         setActiveSignal(s);
-        
-        // Só toca som e dispara notificação se estiver ARMADO
+
         if (soundEnabled) {
-          playAlertSound(s.direction);
+          startAlarm30s(s.direction);
           triggerNotification(s);
         }
       })
@@ -122,6 +195,7 @@ export default function App() {
       })
       .subscribe();
 
+    // Heartbeat check do Sentinela
     const interval = setInterval(() => {
       setSentinel(prev => {
         if (!prev.last_seen) return prev;
@@ -131,6 +205,7 @@ export default function App() {
     }, 2000);
 
     return () => {
+      stopAlarm();
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
@@ -142,7 +217,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col items-center px-3 py-4 sm:p-6 md:p-8 font-sans antialiased relative">
       
-      {/* HEADER RESPONSIVO */}
+      {/* HEADER PRINCIPAL */}
       <header className="w-full max-w-4xl flex flex-col sm:flex-row justify-between items-stretch sm:items-center bg-[#0d1527] border border-slate-800 rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6 shadow-2xl gap-3.5">
         <div className="flex items-center gap-3">
           <div className="p-2.5 sm:p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 shrink-0">
@@ -155,18 +230,18 @@ export default function App() {
                 SENTINEL
               </span>
             </div>
-            <p className="text-[11px] sm:text-xs text-slate-400 truncate">TradingView Monitor • Lumitrader</p>
+            <p className="text-[11px] sm:text-xs text-slate-400 truncate">TradingView Monitor • NASDAQ Prop Desk</p>
           </div>
         </div>
 
-        {/* BOTÕES DE CONTROLE */}
+        {/* CONTROLES DE ALARME */}
         <div className="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/80">
           {soundEnabled && (
             <button
-              onClick={() => playAlertSound('BUY')}
-              title="Testar Som"
+              onClick={handleTestSound}
+              title="Testar sirene por 3 segundos"
               className="px-3 py-2 sm:py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center justify-center gap-1.5 transition-all shrink-0">
-              <Play size={13} className="text-emerald-400" /> Testar
+              <Play size={13} className="text-emerald-400" /> Testar Sirene
             </button>
           )}
 
@@ -183,7 +258,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* STATUS CARDS RESPONSIVOS (Compactos no Mobile, Espaçosos no Desktop) */}
+      {/* STATUS CARDS */}
       <div className="w-full max-w-4xl grid grid-cols-3 gap-2 sm:gap-4 mb-4 sm:mb-6">
         
         {/* Sentinela Local */}
@@ -227,7 +302,7 @@ export default function App() {
             <div className="min-w-0">
               <span className="text-[9px] sm:text-[11px] text-slate-400 font-mono uppercase tracking-wider block truncate">Ativo</span>
               <strong className="text-[11px] sm:text-sm font-bold text-purple-300 truncate block">
-                {sentinel.monitored_symbol || 'BTCUSD'}
+                {sentinel.monitored_symbol || 'MNQ'}
               </strong>
             </div>
           </div>
@@ -236,7 +311,7 @@ export default function App() {
 
       </div>
 
-      {/* POPUP DE ALERTA DE TRADE ATIVO */}
+      {/* POPUP DE ALERTA DE TRADE ATIVO (COM AUTO-STOP E BOTAO CIENTE) */}
       {activeSignal && (
         <div className="w-full max-w-4xl mb-4 sm:mb-6 animate-pulse">
           <div className={`p-4 sm:p-6 rounded-2xl border-2 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 sm:gap-4 shadow-2xl ${
@@ -252,7 +327,7 @@ export default function App() {
               </div>
               <div className="min-w-0">
                 <span className="text-[10px] sm:text-xs text-amber-300 font-bold uppercase tracking-widest font-mono block">
-                  Gatilho Confirmado no TV
+                  🚨 GATILHO CONFIRMADO (SIRENE ATIVA • 30S)
                 </span>
                 <h2 className="text-xl sm:text-2xl font-black text-white truncate">{activeSignal.symbol}</h2>
                 <p className="text-[11px] sm:text-xs text-slate-200 truncate">{activeSignal.info}</p>
@@ -260,15 +335,15 @@ export default function App() {
             </div>
 
             <button
-              onClick={() => setActiveSignal(null)}
-              className="w-full sm:w-auto px-5 py-2.5 sm:py-3 bg-white text-slate-950 font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2 shadow-lg">
-              <CheckCircle2 size={16} /> CIENTE
+              onClick={handleAcknowledgeSignal}
+              className="w-full sm:w-auto px-6 py-3 bg-white text-slate-950 font-black text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-2 shadow-2xl cursor-pointer active:scale-95">
+              <CheckCircle2 size={18} className="text-emerald-600" /> CIENTE (PARAR SOM)
             </button>
           </div>
         </div>
       )}
 
-      {/* HISTÓRICO RESPONSIVO */}
+      {/* HISTÓRICO DE SINAIS */}
       <main className="w-full max-w-4xl bg-[#0d1527] border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 pb-3 border-b border-slate-800/80 gap-2.5">
           <div className="flex items-center gap-2 flex-wrap">
@@ -306,7 +381,7 @@ export default function App() {
 
         {signals.length === 0 ? (
           <div className="py-10 text-center text-slate-500 text-xs">
-            Nenhuma oportunidade registrada ainda hoje.<br />Mantenha o TradingView e a Sentinela ativos.
+            Nenhuma oportunidade registrada ainda hoje.<br />Mantenha o TradingView e a Sentinela ativos em MNQ.
           </div>
         ) : (
           <div className="max-h-[460px] overflow-y-auto pr-1 space-y-2 select-none scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
@@ -349,7 +424,7 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAL DE CONFIRMAÇÃO ELEGANTE */}
+      {/* MODAL DE CONFIRMAÇÃO PARA LIMPEZA */}
       {showClearModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-sm sm:max-w-md bg-[#0d1527] border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-2xl relative animate-in fade-in duration-200">
@@ -365,7 +440,7 @@ export default function App() {
               </div>
               <div>
                 <h4 className="text-sm sm:text-base font-bold text-white">Limpar Histórico</h4>
-                <p className="text-[11px] text-slate-400 font-mono">Zerar registros do Supabase</p>
+                <p className="text-[11px] text-slate-400 font-mono">Zerar registros da sessão</p>
               </div>
             </div>
 
