@@ -494,11 +494,11 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
   const totalR = trades.reduce((acc, t) => acc + Number(t.result_r || 0), 0);
 
   return (
-    <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans antialiased">
+    <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans antialiased overflow-x-clip">
       
       {/* HEADER DE COMANDO INSTITUCIONAL */}
       <header className="w-full bg-[#0b1222] border-b border-slate-800 px-3 py-2.5 sm:px-6 sm:py-3 flex flex-col md:flex-row justify-between items-center gap-2 sm:gap-3 sticky top-0 z-40 shadow-xl">
-        <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-start min-w-0">
+        <div className="flex items-center flex-wrap gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-start min-w-0">
           
           {/* LOGO OFICIAL LUMI COPILOT */}
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
@@ -522,7 +522,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
           </div>
 
           {/* RELÓGIOS DE FUSO */}
-          <div className="flex items-center gap-1.5 sm:gap-2 font-mono text-[10px] sm:text-[11px] bg-[#070d1a] border border-slate-800 px-2 sm:px-3 py-1.5 rounded-xl shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 font-mono text-[9px] sm:text-[11px] bg-[#070d1a] border border-slate-800 px-2 sm:px-3 py-1.5 rounded-xl shrink-0">
             <div className="flex items-center gap-1 sm:gap-1.5 text-slate-300">
               <Globe size={12} className="text-cyan-400" />
               <span>DUB:</span>
@@ -536,9 +536,9 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
           </div>
         </div>
 
-        {/* NAVEGAÇÃO E AÇÕES */}
-        <div className="flex items-center gap-2 w-full md:w-auto justify-start md:justify-end overflow-x-auto pb-1 md:pb-0 min-w-0">
-          <div className="flex bg-[#070d1a] p-1 rounded-xl border border-slate-800 shrink-0">
+        {/* NAVEGAÇÃO E AÇÕES — abas rolam, botões de ação sempre visíveis */}
+        <div className="flex items-center gap-2 w-full md:w-auto min-w-0">
+          <div className="flex bg-[#070d1a] p-1 rounded-xl border border-slate-800 overflow-x-auto flex-1 md:flex-none min-w-0">
             <button 
               onClick={() => setActiveTab('cockpit')}
               className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'cockpit' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
@@ -561,6 +561,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
             </button>
           </div>
 
+          <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
             className={`p-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
@@ -586,6 +587,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
             }>
             <Key size={16} />
           </button>
+          </div>
         </div>
       </header>
 
@@ -654,11 +656,10 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             
-            {/* COLUNA ESQUERDA: Sentinela + Oportunidades + Janelas Oficiais (4 cols) */}
-            <div className="lg:col-span-4 space-y-4">
+            {/* Layout plano: cada card abaixo é item direto do grid (lg:order define a posição no desktop) */}
               
               {/* Card Sentinela Local com Feed Ao Vivo */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-4 lg:order-1">
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-xs font-bold text-slate-400 uppercase font-mono tracking-wider flex items-center gap-1.5">
                     <Eye size={14} className="text-cyan-400" /> Sentinela OpenCV
@@ -707,7 +708,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               </div>
 
               {/* Oportunidades do Dia (Sinais da Sentinela) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-4 lg:order-4">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
                     <Zap size={14} className="text-emerald-400" /> Oportunidades do Dia
@@ -723,7 +724,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 </div>
 
                 {signals.length === 0 ? (
-                  <div className="py-8 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                  <div className="py-5 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
                     Nenhuma oportunidade captada hoje.<br />Inicie a <strong>Sentinela</strong> para detectar gatilhos BUY/SELL.
                   </div>
                 ) : (
@@ -764,38 +765,33 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               </div>
 
               {/* Janelas Oficiais (Dublin) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs">
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs min-w-0 lg:col-span-3 lg:order-6">
                 <h4 className="text-xs font-bold text-slate-300 uppercase mb-3 flex items-center gap-1.5">
                   <Clock size={14} className="text-amber-400" /> Janelas Oficiais (Dublin)
                 </h4>
                 <div className="space-y-2">
-                  <div className="p-2.5 rounded-xl border bg-emerald-950/20 border-emerald-500/30 flex justify-between items-center">
+                  <div className="p-2.5 rounded-xl border bg-emerald-950/20 border-emerald-500/30 flex justify-between items-center gap-2 flex-wrap">
                     <div>
                       <strong className="text-emerald-300 block">08:15 – 11:00 (Londres Open)</strong>
                       <span className="text-[10px] text-slate-400">Setup 2: London Sniper (DD Baixo)</span>
                     </div>
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">MANHÃ</span>
+                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">MANHÃ</span>
                   </div>
-                  <div className="p-2.5 rounded-xl border bg-cyan-950/20 border-cyan-500/30 flex justify-between items-center">
+                  <div className="p-2.5 rounded-xl border bg-cyan-950/20 border-cyan-500/30 flex justify-between items-center gap-2 flex-wrap">
                     <div>
                       <strong className="text-cyan-300 block">18:15 – 20:45 (US Power Hour)</strong>
                       <span className="text-[10px] text-slate-400">Setup 1: Power Hour Trend (Expansão)</span>
                     </div>
-                    <span className="text-[9px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded">TARDE</span>
+                    <span className="text-[9px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">TARDE</span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-900/50 border border-slate-800/80 text-[10px] text-slate-400">
                     ⚠️ <strong>Regra de Mesa:</strong> Saída compulsória de todas as ordens antes das 20h55 Dublin.
                   </div>
                 </div>
               </div>
-
-            </div>
-
-            {/* COLUNA CENTRAL: Setups Campeões Permanentes + Setups do Dia (5 cols) */}
-            <div className="lg:col-span-5 space-y-4">
               
               {/* Setups Fixos Oficiais */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-5 lg:order-2">
                 <h3 className="text-xs font-bold text-slate-300 uppercase font-mono tracking-wider mb-3 flex items-center gap-1.5">
                   <Award size={14} className="text-amber-400" /> Setups Campeões (Playbook Oficial)
                 </h3>
@@ -833,7 +829,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               </div>
 
               {/* Setups do Dia (Extraídos por IA) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-5 lg:order-5">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
                     <Sparkles size={14} className="text-cyan-400" /> Setups Extraídos do Otimizador (Hoje)
@@ -844,7 +840,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 </div>
 
                 {scannedSetups.length === 0 ? (
-                  <div className="py-8 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                  <div className="py-5 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
                     Nenhum setup importado hoje.<br />Vá até a aba <strong>Scanner IA</strong> e envie um print do TradingView.
                   </div>
                 ) : (
@@ -864,13 +860,8 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                   </div>
                 )}
               </div>
-
-            </div>
-
-            {/* COLUNA DIREITA: Checklist Diário (3 cols) */}
-            <div className="lg:col-span-3 space-y-4">
               
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-3 lg:order-3">
                 <div className="flex justify-between items-center mb-3">
                   <h4 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
                     <CheckSquare size={14} className="text-emerald-400" /> Checklist Pré-Mercado
@@ -893,8 +884,6 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                   ))}
                 </div>
               </div>
-
-            </div>
 
           </div>
 
