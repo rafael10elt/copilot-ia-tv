@@ -21,6 +21,7 @@ export default function App() {
   const [selectedSignals, setSelectedSignals] = useState([]); // ids marcados no gerenciador
   const [showDeleteSignalsModal, setShowDeleteSignalsModal] = useState(false);
   const [isDeletingSignals, setIsDeletingSignals] = useState(false);
+  const [feedback, setFeedback] = useState(null); // {title, message, tone, actionLabel?, onAction?}
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [sentinel, setSentinel] = useState({ 
     is_online: false, 
@@ -38,6 +39,33 @@ export default function App() {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scannedSetups, setScannedSetups] = useState([]);
+  // 'missing' (amarelo) | 'checking' (validando) | 'ok' (verde) | 'error' (vermelho)
+  const [groqStatus, setGroqStatus] = useState(
+    localStorage.getItem('lumi_groq_key') ? 'checking' : 'missing'
+  );
+
+  // Valida a chave com uma chamada leve que não consome cota (só autentica)
+  const validateGroqKey = async (key) => {
+    const k = (key || '').trim();
+    if (!k) { setGroqStatus('missing'); return false; }
+    setGroqStatus('checking');
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { 'Authorization': `Bearer ${k}` }
+      });
+      setGroqStatus(res.ok ? 'ok' : 'error');
+      return res.ok;
+    } catch (e) {
+      setGroqStatus('error');
+      return false;
+    }
+  };
+
+  // Valida automaticamente ao abrir o app quando já existe chave salva
+  useEffect(() => {
+    if (groqKey) validateGroqKey(groqKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Contas de Mesa e Diário
   const [accounts, setAccounts] = useState([]);
@@ -241,8 +269,13 @@ export default function App() {
     if (!file) return;
 
     if (!groqKey) {
-      alert("Por favor, adicione sua API Key do Groq nas configurações primeiro!");
-      setShowKeyModal(true);
+      setFeedback({
+        title: "Chave Groq necessária",
+        message: "Por favor, adicione sua API Key do Groq nas configurações primeiro!",
+        tone: "info",
+        actionLabel: "Configurar chave",
+        onAction: () => { setFeedback(null); setShowKeyModal(true); }
+      });
       return;
     }
 
@@ -299,7 +332,15 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         });
 
         const resData = await response.json();
-        if (resData.choices && resData.choices[0]) {
+        if (resData.error) {
+          setGroqStatus('error');
+          setFeedback({
+            title: "Falha no Scanner IA",
+            message: `Groq recusou a chamada (${resData.error.message || 'verifique a chave e a cota'}).`,
+            tone: "error"
+          });
+        } else if (resData.choices && resData.choices[0]) {
+          setGroqStatus('ok');
           const parsed = JSON.parse(resData.choices[0].message.content);
           if (parsed.setups && parsed.setups.length > 0) {
             setScannedSetups(parsed.setups);
@@ -314,7 +355,12 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
       reader.readAsDataURL(file);
     } catch (err) {
       console.error("Erro no Scanner Groq:", err);
-      alert("Falha ao analisar imagem via Groq Vision. Verifique sua chave API.");
+      setGroqStatus('error');
+      setFeedback({
+        title: "Falha no Scanner IA",
+        message: "Falha ao analisar imagem via Groq Vision. Verifique sua chave API.",
+        tone: "error"
+      });
       setIsScanning(false);
     }
   };
@@ -380,7 +426,11 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
       setSelectedSignals([]);
       setShowDeleteSignalsModal(false);
     } else {
-      alert("Falha ao apagar. Tente novamente.");
+      setFeedback({
+        title: "Falha ao apagar",
+        message: "Falha ao apagar. Tente novamente.",
+        tone: "error"
+      });
     }
   };
 
@@ -467,8 +517,18 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
           <button
             onClick={() => setShowKeyModal(true)}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl transition-all"
-            title="Configurar Chave Groq">
+            className={`p-2 rounded-xl transition-all border ${
+              groqStatus === 'ok' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              : groqStatus === 'error' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+              : groqStatus === 'checking' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
+              : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+            }`}
+            title={
+              groqStatus === 'ok' ? 'Groq conectado — chave válida'
+              : groqStatus === 'error' ? 'Falha na chave Groq — clique para corrigir'
+              : groqStatus === 'checking' ? 'Validando chave Groq...'
+              : 'Sem chave Groq — clique para configurar'
+            }>
             <Key size={16} />
           </button>
         </div>
@@ -1073,19 +1133,47 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               placeholder="gsk_..." 
               value={groqKey} 
               onChange={e => setGroqKey(e.target.value)} 
-              className="w-full bg-[#070d1a] border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white mb-4 font-mono"
+              className="w-full bg-[#070d1a] border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white mb-3 font-mono"
             />
+            <div className="flex items-center gap-2 mb-4 font-mono text-[11px]">
+              <span className={`w-2 h-2 rounded-full ${
+                groqStatus === 'ok' ? 'bg-emerald-400'
+                : groqStatus === 'error' ? 'bg-rose-500'
+                : groqStatus === 'checking' ? 'bg-cyan-400 animate-pulse'
+                : 'bg-amber-400'
+              }`} />
+              <span className={
+                groqStatus === 'ok' ? 'text-emerald-300'
+                : groqStatus === 'error' ? 'text-rose-300'
+                : groqStatus === 'checking' ? 'text-cyan-300'
+                : 'text-amber-300'
+              }>
+                {groqStatus === 'ok' ? 'Chave válida — Groq conectado'
+                : groqStatus === 'error' ? 'Chave inválida ou sem conexão'
+                : groqStatus === 'checking' ? 'Validando chave...'
+                : 'Nenhuma chave configurada'}
+              </span>
+            </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowKeyModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-semibold">
                 Cancelar
               </button>
               <button 
-                onClick={() => {
-                  localStorage.setItem('lumi_groq_key', groqKey.trim());
+                onClick={async () => {
+                  const k = groqKey.trim();
+                  localStorage.setItem('lumi_groq_key', k);
                   setShowKeyModal(false);
+                  const valid = await validateGroqKey(k);
+                  if (!valid && k) {
+                    setFeedback({
+                      title: "Chave Groq inválida",
+                      message: "Não foi possível conectar com essa chave. Verifique se ela está correta e com cota disponível.",
+                      tone: "error"
+                    });
+                  }
                 }} 
                 className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold">
-                Salvar Chave
+                Salvar e Validar
               </button>
             </div>
           </div>
@@ -1120,6 +1208,33 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 <Trash2 size={14} />
                 {isDeletingSignals ? 'Apagando...' : `Apagar (${selectedSignals.length})`}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE AVISO GENÉRICO (substitui alert nativo) */}
+      {feedback && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0b1222] border border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 border ${feedback.tone === 'error' ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
+              {feedback.tone === 'error' ? <AlertOctagon size={24} /> : <Key size={24} />}
+            </div>
+            <h3 className="text-sm font-bold text-white mb-2">{feedback.title}</h3>
+            <p className="text-xs text-slate-400 mb-5 leading-relaxed">{feedback.message}</p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setFeedback(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-all">
+                Fechar
+              </button>
+              {feedback.actionLabel && (
+                <button
+                  onClick={feedback.onAction}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition-all">
+                  {feedback.actionLabel}
+                </button>
+              )}
             </div>
           </div>
         </div>
