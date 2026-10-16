@@ -19,6 +19,8 @@ export default function App() {
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
   const [selectedSignals, setSelectedSignals] = useState([]); // ids marcados no gerenciador
+  const [showDeleteSignalsModal, setShowDeleteSignalsModal] = useState(false);
+  const [isDeletingSignals, setIsDeletingSignals] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [sentinel, setSentinel] = useState({ 
     is_online: false, 
@@ -363,13 +365,20 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     );
   };
 
-  const deleteSelectedSignals = async () => {
+  const deleteSelectedSignals = () => {
     if (selectedSignals.length === 0) return;
-    if (!window.confirm(`Apagar ${selectedSignals.length} oportunidade(s) selecionada(s)?`)) return;
+    setShowDeleteSignalsModal(true);
+  };
+
+  const confirmDeleteSelectedSignals = async () => {
+    if (selectedSignals.length === 0) return;
+    setIsDeletingSignals(true);
     const { error } = await supabase.from('lumi_signals_cop').delete().in('id', selectedSignals);
+    setIsDeletingSignals(false);
     if (!error) {
       setSignals(prev => prev.filter(s => !selectedSignals.includes(s.id)));
       setSelectedSignals([]);
+      setShowDeleteSignalsModal(false);
     } else {
       alert("Falha ao apagar. Tente novamente.");
     }
@@ -1077,6 +1086,39 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 }} 
                 className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold">
                 Salvar Chave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIRMAÇÃO APAGAR OPORTUNIDADES */}
+      {showDeleteSignalsModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0b1222] border border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="w-12 h-12 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl flex items-center justify-center mb-4">
+              <Trash2 size={24} />
+            </div>
+            <h3 className="text-sm font-bold text-white mb-2">Apagar oportunidades?</h3>
+            <p className="text-xs text-slate-400 mb-2 leading-relaxed">
+              Você está prestes a apagar <strong className="text-rose-300">{selectedSignals.length} oportunidade(s)</strong> selecionada(s) do banco de dados.
+            </p>
+            <p className="text-[11px] text-slate-500 mb-5 font-mono">
+              Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowDeleteSignalsModal(false)}
+                disabled={isDeletingSignals}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-all disabled:opacity-50">
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDeleteSelectedSignals}
+                disabled={isDeletingSignals}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50">
+                <Trash2 size={14} />
+                {isDeletingSignals ? 'Apagando...' : `Apagar (${selectedSignals.length})`}
               </button>
             </div>
           </div>
