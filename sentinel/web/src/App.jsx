@@ -11,6 +11,19 @@ const SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2eWxscGJxdGFoeHJxc2pqemdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzU3NzEsImV4cCI6MjEwNjgxMTc3MX0.7qIsu2oZermD9uPA8ggSfNZuKDZH-_ifs2jJjeTX6XM";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
+// Modelo de visão usado no Scanner IA (troque aqui se a Groq descontinuar este)
+const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
+
+// Extrai a mensagem real de erro da API Groq (ex: 401 chave inválida, 404 modelo inexistente, 429 cota)
+const readGroqError = async (res) => {
+  try {
+    const data = await res.json();
+    return data?.error?.message || JSON.stringify(data).slice(0, 300);
+  } catch {
+    return `HTTP ${res.status} ${res.statusText || ''}`.trim();
+  }
+};
+
 export default function App() {
   // Navegação
   const [activeTab, setActiveTab] = useState('cockpit'); // 'cockpit', 'scanner', 'accounts', 'journal'
@@ -44,20 +57,43 @@ export default function App() {
     localStorage.getItem('lumi_groq_key') ? 'checking' : 'missing'
   );
 
-  // Valida a chave com uma chamada leve que não consome cota (só autentica)
+  // Valida a chave em 2 etapas (retorna {ok, error}) e guarda o detalhe em groqError:
+  // 1ª autenticação (/models, sem gastar cota) • 2ª modelo de visão (1 token, valida o modelo usado no Scanner)
+  const [groqError, setGroqError] = useState(null); // {step, status, message}
   const validateGroqKey = async (key) => {
     const k = (key || '').trim();
-    if (!k) { setGroqStatus('missing'); return false; }
+    if (!k) { setGroqStatus('missing'); setGroqError(null); return { ok: false, error: null }; }
     setGroqStatus('checking');
+    setGroqError(null);
     try {
-      const res = await fetch('https://api.groq.com/openai/v1/models', {
+      const resModels = await fetch('https://api.groq.com/openai/v1/models', {
         headers: { 'Authorization': `Bearer ${k}` }
       });
-      setGroqStatus(res.ok ? 'ok' : 'error');
-      return res.ok;
+      if (!resModels.ok) {
+        const error = { step: 'Autenticação (/models)', status: resModels.status, message: await readGroqError(resModels) };
+        setGroqStatus('error');
+        setGroqError(error);
+        return { ok: false, error };
+      }
+      const resChat = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${k}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: GROQ_VISION_MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+      });
+      if (!resChat.ok) {
+        const error = { step: `Modelo ${GROQ_VISION_MODEL}`, status: resChat.status, message: await readGroqError(resChat) };
+        setGroqStatus('error');
+        setGroqError(error);
+        return { ok: false, error };
+      }
+      setGroqStatus('ok');
+      setGroqError(null);
+      return { ok: true, error: null };
     } catch (e) {
+      const error = { step: 'Rede', status: 0, message: `Sem resposta da API Groq (${e.message}). Verifique internet/adblock.` };
       setGroqStatus('error');
-      return false;
+      setGroqError(error);
+      return { ok: false, error };
     }
   };
 
@@ -292,7 +328,7 @@ export default function App() {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            model: "llama-3.2-11b-vision-preview",
+            model: GROQ_VISION_MODEL,
             messages: [
               {
                 role: "user",
@@ -334,10 +370,13 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         const resData = await response.json();
         if (resData.error) {
           setGroqStatus('error');
+          const apiError = { step: `Scanner IA (${GROQ_VISION_MODEL})`, status: response.status, message: resData.error.message || 'Erro desconhecido' };
+          setGroqError(apiError);
           setFeedback({
             title: "Falha no Scanner IA",
-            message: `Groq recusou a chamada (${resData.error.message || 'verifique a chave e a cota'}).`,
-            tone: "error"
+            message: "A Groq recusou a chamada. Veja o detalhe técnico abaixo.",
+            tone: "error",
+            detail: `[${apiError.step}] HTTP ${apiError.status}: ${apiError.message}`
           });
         } else if (resData.choices && resData.choices[0]) {
           setGroqStatus('ok');
@@ -1154,6 +1193,13 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 : 'Nenhuma chave configurada'}
               </span>
             </div>
+            {groqError && (
+              <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl font-mono text-[11px] text-rose-200/90 space-y-1 break-words">
+                <div><span className="text-rose-400 font-bold">Etapa: </span>{groqError.step}</div>
+                <div><span className="text-rose-400 font-bold">HTTP: </span>{groqError.status}</div>
+                <div><span className="text-rose-400 font-bold">Detalhe: </span>{groqError.message}</div>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowKeyModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-semibold">
                 Cancelar
@@ -1163,12 +1209,13 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                   const k = groqKey.trim();
                   localStorage.setItem('lumi_groq_key', k);
                   setShowKeyModal(false);
-                  const valid = await validateGroqKey(k);
-                  if (!valid && k) {
+                  const { ok, error } = await validateGroqKey(k);
+                  if (!ok && k) {
                     setFeedback({
                       title: "Chave Groq inválida",
-                      message: "Não foi possível conectar com essa chave. Verifique se ela está correta e com cota disponível.",
-                      tone: "error"
+                      message: "Não foi possível conectar com essa chave. Veja o detalhe técnico abaixo.",
+                      tone: "error",
+                      detail: error ? `[${error.step}] HTTP ${error.status}: ${error.message}` : null
                     });
                   }
                 }} 
@@ -1221,7 +1268,13 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               {feedback.tone === 'error' ? <AlertOctagon size={24} /> : <Key size={24} />}
             </div>
             <h3 className="text-sm font-bold text-white mb-2">{feedback.title}</h3>
-            <p className="text-xs text-slate-400 mb-5 leading-relaxed">{feedback.message}</p>
+            <p className="text-xs text-slate-400 mb-2 leading-relaxed">{feedback.message}</p>
+            {feedback.detail && (
+              <div className="mb-5 p-3 bg-slate-900/80 border border-slate-700 rounded-xl font-mono text-[11px] text-slate-300 break-words">
+                {feedback.detail}
+              </div>
+            )}
+            {!feedback.detail && <div className="mb-3" />}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setFeedback(null)}
