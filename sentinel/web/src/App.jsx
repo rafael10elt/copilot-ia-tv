@@ -18,6 +18,7 @@ export default function App() {
   // Sentinela e Sinais
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
+  const [selectedSignals, setSelectedSignals] = useState([]); // ids marcados no gerenciador
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [sentinel, setSentinel] = useState({ 
     is_online: false, 
@@ -349,6 +350,31 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     localStorage.setItem('lumi_checklist', JSON.stringify(reset));
   };
 
+  // Gerenciador de Oportunidades (sinais da sentinela)
+  const toggleSignal = (id) => {
+    setSelectedSignals(prev =>
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAllSignals = () => {
+    setSelectedSignals(prev =>
+      prev.length === signals.length ? [] : signals.map(s => s.id)
+    );
+  };
+
+  const deleteSelectedSignals = async () => {
+    if (selectedSignals.length === 0) return;
+    if (!window.confirm(`Apagar ${selectedSignals.length} oportunidade(s) selecionada(s)?`)) return;
+    const { error } = await supabase.from('lumi_signals_cop').delete().in('id', selectedSignals);
+    if (!error) {
+      setSignals(prev => prev.filter(s => !selectedSignals.includes(s.id)));
+      setSelectedSignals([]);
+    } else {
+      alert("Falha ao apagar. Tente novamente.");
+    }
+  };
+
   // PnL Acumulado
   const totalPnL = trades.reduce((acc, t) => acc + Number(t.result_usd || 0), 0);
   const totalR = trades.reduce((acc, t) => acc + Number(t.result_r || 0), 0);
@@ -525,9 +551,67 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                     <div className="py-2.5 text-center text-[10px] text-slate-600 font-mono">
                       {sentinel.is_online ? 'Aguardando primeiro frame...' : 'Inicie a Sentinela no PC para ver a tela'}
                     </div>
+                )}
+              </div>
+
+              {/* Oportunidades do Dia (Sinais da Sentinela) */}
+              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
+                    <Zap size={14} className="text-emerald-400" /> Oportunidades do Dia
+                    <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-mono">
+                      {signals.length}
+                    </span>
+                  </h3>
+                  {signals.length > 0 && (
+                    <button onClick={toggleAllSignals} className="text-[10px] text-cyan-400 hover:underline font-mono">
+                      {selectedSignals.length === signals.length ? 'Desmarcar todos' : 'Marcar todos'}
+                    </button>
                   )}
                 </div>
+
+                {signals.length === 0 ? (
+                  <div className="py-8 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
+                    Nenhuma oportunidade captada hoje.<br />Inicie a <strong>Sentinela</strong> para detectar gatilhos BUY/SELL.
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                      {signals.map(sig => (
+                        <label key={sig.id} className={`p-2.5 bg-[#070d1a] border rounded-xl flex items-center gap-2.5 cursor-pointer transition-all font-mono text-xs ${selectedSignals.includes(sig.id) ? 'border-cyan-500/60' : 'border-slate-800'}`}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSignals.includes(sig.id)}
+                            onChange={() => toggleSignal(sig.id)}
+                            className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0 shrink-0"
+                          />
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${sig.direction === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                            {sig.direction}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex justify-between items-center gap-2">
+                              <strong className="text-white truncate">{sig.symbol}</strong>
+                              <span className="text-slate-500 text-[10px] shrink-0">
+                                {sig.created_at ? new Date(sig.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                              </span>
+                            </div>
+                            {sig.info && <p className="text-[10px] text-slate-400 truncate">{sig.info}</p>}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                    {selectedSignals.length > 0 && (
+                      <button
+                        onClick={deleteSelectedSignals}
+                        className="mt-3 w-full py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5">
+                        <Trash2 size={14} /> Apagar ({selectedSignals.length}) selecionada(s)
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+
+            </div>
 
               {/* Linha do Tempo de Sessões (Fuso Dublin) */}
               <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs">
