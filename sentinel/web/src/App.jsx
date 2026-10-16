@@ -11,6 +11,14 @@ const SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2eWxscGJxdGFoeHJxc2pqemdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzU3NzEsImV4cCI6MjEwNjgxMTc3MX0.7qIsu2oZermD9uPA8ggSfNZuKDZH-_ifs2jJjeTX6XM";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
+// Cadeia de modelos de visão com fallback automático (a Groq descontinua
+// modelos com frequência — o app tenta nesta ordem e usa o 1º que responder)
+const GROQ_VISION_CANDIDATES = [
+  "meta-llama/llama-4-scout-17b-16e-instruct",
+  "meta-llama/llama-4-maverick-17b-128e-instruct",
+  "qwen/qwen3.8-27b",
+];
+
 // Extrai a mensagem real de erro da API Groq
 const readGroqError = async (res) => {
   try {
@@ -55,7 +63,7 @@ export default function App() {
     (localStorage.getItem('lumi_groq_key') || localStorage.getItem('ai_key')) ? 'checking' : 'missing'
   );
   const [groqError, setGroqError] = useState(null);
-  const [activeVisionModel, setActiveVisionModel] = useState('llama-3.2-11b-vision-preview');
+  const [activeVisionModel, setActiveVisionModel] = useState(GROQ_VISION_CANDIDATES[0]);
 
   // Validação dinâmica idêntica ao prop-copilot-frontend:
   // Consulta /models para autenticar a chave e já descobre o modelo de visão disponível
@@ -80,14 +88,35 @@ export default function App() {
       }
       
       const modelsData = await resModels.json();
-      if (modelsData.data && modelsData.data.length > 0) {
-        const ids = modelsData.data.map(m => m.id);
-        // Busca dinamicamente qualquer modelo de visão ativo na sua conta
-        const foundVision = ids.find(id => id.includes('vision'));
-        if (foundVision) {
-          setActiveVisionModel(foundVision);
+      const ids = modelsData?.data?.map(m => m.id) || [];
+      // Testa a cadeia em ordem (prioriza candidatos anunciados em /models).
+      // O 1º que responder vira o modelo ativo — acabou o "travou no modelo morto".
+      const ordered = [
+        ...GROQ_VISION_CANDIDATES.filter(c => ids.includes(c)),
+        ...GROQ_VISION_CANDIDATES.filter(c => !ids.includes(c))
+      ];
+      let working = null;
+      let lastErr = null;
+      for (const candidate of ordered) {
+        try {
+          const ping = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${k}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: candidate, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+          });
+          if (ping.ok) { working = candidate; break; }
+          lastErr = { step: `Modelo ${candidate}`, status: ping.status, message: await readGroqError(ping) };
+        } catch (ePing) {
+          lastErr = { step: `Modelo ${candidate}`, status: 0, message: ePing.message };
         }
       }
+      if (!working) {
+        const error = lastErr || { step: 'Modelos de visão', status: 0, message: 'Nenhum modelo de visão respondeu.' };
+        setGroqStatus('error');
+        setGroqError(error);
+        return { ok: false, error };
+      }
+      setActiveVisionModel(working);
 
       setGroqStatus('ok');
       setGroqError(null);
@@ -318,21 +347,28 @@ export default function App() {
 
     setIsScanning(true);
     try {
-      // 1. Descobre dinamicamente o melhor modelo de visão ativo na sua conta
-      let visionModel = activeVisionModel;
-      try {
-        const resModels = await fetch('https://api.groq.com/openai/v1/models', {
-          headers: { 'Authorization': `Bearer ${key}` }
-        });
-        if (resModels.ok) {
-          const mData = await resModels.json();
-          const ids = mData?.data?.map(m => m.id) || [];
-          const found = ids.find(id => id.includes('vision'));
-          if (found) visionModel = found;
+      // 1. Resolve o modelo de visão funcionando (ativo 1º, depois a cadeia).
+      // Se a Groq matou o modelo no meio do caminho, o próximo assume sozinho.
+      const tryModels = [activeVisionModel, ...GROQ_VISION_CANDIDATES.filter(c => c !== activeVisionModel)];
+      let visionModel = tryModels[0];
+      for (const candidate of tryModels) {
+        try {
+          const ping = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: candidate, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+          });
+          if (ping.ok) { visionModel = candidate; break; }
+          const pmsg = (await readGroqError(ping)).toLowerCase();
+          const gone = ping.status === 404 || ping.status === 410
+            || pmsg.includes('decommission') || pmsg.includes('not found')
+            || pmsg.includes('does not exist') || pmsg.includes('model_not_found');
+          if (!gone) { visionModel = candidate; break; } // erro de cota/auth: trocar de modelo não resolve
+        } catch (errCheck) {
+          break; // sem rede: mantém o ativo e o erro aparece no envio real
         }
-      } catch (errCheck) {
-        console.log("Usando modelo padrão:", visionModel);
       }
+      if (visionModel !== activeVisionModel) setActiveVisionModel(visionModel);
 
       const reader = new FileReader();
       reader.onloadend = async () => {
