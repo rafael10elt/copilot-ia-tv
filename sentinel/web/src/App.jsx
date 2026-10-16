@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import { 
   Volume2, VolumeX, ShieldAlert, ArrowUpRight, ArrowDownRight, 
   Zap, CheckCircle2, Eye, Activity, Trash2, Clock, Play, 
-  Calendar, Award, BookOpen, Sparkles, Upload, Key, DollarSign,
-  TrendingUp, AlertOctagon, CheckSquare, RefreshCw, Plus, X, Globe
+  Calendar, Award, BookOpen, Sparkles, Upload, Key,
+  TrendingUp, AlertOctagon, CheckSquare, RefreshCw, Plus, X, Globe, ListChecks
 } from 'lucide-react';
 
 const SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co";
@@ -481,39 +481,39 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans antialiased">
       
       {/* HEADER DE COMANDO INSTITUCIONAL */}
-      <header className="w-full bg-[#0b1222] border-b border-slate-800 px-4 py-3 sm:px-6 flex flex-col md:flex-row justify-between items-center gap-3 sticky top-0 z-40 shadow-xl">
-        <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+      <header className="w-full bg-[#0b1222] border-b border-slate-800 px-3 py-2.5 sm:px-6 sm:py-3 flex flex-col md:flex-row justify-between items-center gap-2 sm:gap-3 sticky top-0 z-40 shadow-xl">
+        <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-start min-w-0">
           
           {/* LOGO OFICIAL LUMI COPILOT */}
-<div className="flex items-center gap-2.5">
-  <div className="relative group">
+<div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
+  <div className="relative group shrink-0">
     <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl blur opacity-40 group-hover:opacity-75 transition duration-300"></div>
     <div className="relative p-1 bg-[#070d1a] border border-cyan-500/30 rounded-xl flex items-center justify-center shadow-lg">
       <img 
         src="/images/logo_cop_sem_fundo.png" 
         alt="Lumi Copilot" 
-        className="w-8 h-8 object-contain"
+        className="w-7 h-7 sm:w-8 sm:h-8 object-contain"
       />
     </div>
   </div>
-  <div>
-    <div className="flex items-center gap-2">
-      <h1 className="text-sm sm:text-base font-black tracking-wider text-white">LUMI COPILOT</h1>
-      <span className="text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold">PRO DESK</span>
+  <div className="min-w-0">
+    <div className="flex items-center gap-1.5 sm:gap-2">
+      <h1 className="text-xs sm:text-base font-black tracking-wider text-white whitespace-nowrap">LUMI COPILOT</h1>
+      <span className="text-[8px] sm:text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">PRO DESK</span>
     </div>
-    <p className="text-[10px] text-slate-400 font-mono">NASDAQ Scalp • Dublin Hub</p>
+    <p className="text-[9px] sm:text-[10px] text-slate-400 font-mono truncate">NASDAQ Scalp • Dublin Hub</p>
   </div>
 </div>
 
           {/* RELÓGIOS DE FUSO */}
-          <div className="flex items-center gap-2 font-mono text-[11px] bg-[#070d1a] border border-slate-800 px-3 py-1.5 rounded-xl">
-            <div className="flex items-center gap-1.5 text-slate-300">
+          <div className="flex items-center gap-1.5 sm:gap-2 font-mono text-[10px] sm:text-[11px] bg-[#070d1a] border border-slate-800 px-2 sm:px-3 py-1.5 rounded-xl shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-slate-300">
               <Globe size={12} className="text-cyan-400" />
               <span>DUB:</span>
               <strong className="text-white">{timeDublin || '--:--'}</strong>
             </div>
             <span className="text-slate-600">|</span>
-            <div className="flex items-center gap-1.5 text-slate-300">
+            <div className="flex items-center gap-1 sm:gap-1.5 text-slate-300">
               <span>NY:</span>
               <strong className="text-amber-400">{timeNY || '--:--'}</strong>
             </div>
@@ -521,33 +521,33 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         </div>
 
         {/* NAVEGAÇÃO E AÇÕES */}
-        <div className="flex items-center gap-2 w-full md:w-auto justify-end overflow-x-auto pb-1 md:pb-0">
-          <div className="flex bg-[#070d1a] p-1 rounded-xl border border-slate-800">
+        <div className="flex items-center gap-2 w-full md:w-auto justify-start md:justify-end overflow-x-auto pb-1 md:pb-0 min-w-0">
+          <div className="flex bg-[#070d1a] p-1 rounded-xl border border-slate-800 shrink-0">
             <button 
               onClick={() => setActiveTab('cockpit')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'cockpit' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'cockpit' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <Activity size={13} /> Cockpit
             </button>
             <button 
               onClick={() => setActiveTab('scanner')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'scanner' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'scanner' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <Sparkles size={13} /> Scanner IA
             </button>
             <button 
               onClick={() => setActiveTab('accounts')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'accounts' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'accounts' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <Award size={13} /> Mesas
             </button>
             <button 
               onClick={() => setActiveTab('journal')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${activeTab === 'journal' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'journal' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <BookOpen size={13} /> Diário
             </button>
           </div>
 
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-2 rounded-xl text-xs font-bold transition-all border ${
+            className={`p-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
               soundEnabled ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'
             }`}
             title={soundEnabled ? "Sirene Armada" : "Sirene Desarmada"}>
@@ -556,7 +556,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
           <button
             onClick={() => setShowKeyModal(true)}
-            className={`p-2 rounded-xl transition-all border ${
+            className={`p-2 rounded-xl transition-all border shrink-0 ${
               groqStatus === 'ok' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
               : groqStatus === 'error' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
               : groqStatus === 'checking' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
@@ -575,30 +575,30 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
       {/* ALERTA DE NOTÍCIA 3 ESTRELAS PISCANDO (SE HOUVER EM 15 MIN) */}
       {activeNewsAlert && (
-        <div className="bg-rose-950/90 border-b border-rose-500/60 px-4 py-2 flex items-center justify-between text-xs text-rose-200 animate-pulse font-mono">
-          <div className="flex items-center gap-2">
-            <AlertOctagon size={16} className="text-rose-400" />
-            <span><strong>ALERTA DE VOLATILIDADE MESA:</strong> {activeNewsAlert.country} - {activeNewsAlert.title}</span>
+        <div className="bg-rose-950/90 border-b border-rose-500/60 px-3 sm:px-4 py-2 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:justify-between text-xs text-rose-200 animate-pulse font-mono">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertOctagon size={16} className="text-rose-400 shrink-0" />
+            <span className="truncate"><strong>ALERTA DE VOLATILIDADE MESA:</strong> {activeNewsAlert.country} - {activeNewsAlert.title}</span>
           </div>
-          <span className="text-[11px] bg-rose-900/60 px-2 py-0.5 rounded border border-rose-700">PAUSA OBRIGATÓRIA</span>
+          <span className="text-[11px] bg-rose-900/60 px-2 py-0.5 rounded border border-rose-700 self-start sm:self-auto whitespace-nowrap">PAUSA OBRIGATÓRIA</span>
         </div>
       )}
 
       {/* POPUP DE ALERTA DE TRADE ATIVO DA SENTINELA */}
       {activeSignal && (
-        <div className="p-4 bg-gradient-to-r from-emerald-950 to-slate-900 border-b border-emerald-500 flex items-center justify-between shadow-2xl">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl font-black ${activeSignal.direction === 'BUY' ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'}`}>
+        <div className="p-3 sm:p-4 bg-gradient-to-r from-emerald-950 to-slate-900 border-b border-emerald-500 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between shadow-2xl">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`p-2.5 rounded-xl font-black shrink-0 ${activeSignal.direction === 'BUY' ? 'bg-emerald-500 text-slate-950' : 'bg-rose-500 text-white'}`}>
               {activeSignal.direction === 'BUY' ? <ArrowUpRight size={22} /> : <ArrowDownRight size={22} />}
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="text-[10px] text-emerald-400 font-mono font-bold">GATILHO SENTINELA ATIVO</span>
-              <h3 className="text-base font-bold text-white">{activeSignal.direction} em {activeSignal.symbol}</h3>
+              <h3 className="text-base font-bold text-white truncate">{activeSignal.direction} em {activeSignal.symbol}</h3>
             </div>
           </div>
           <button
             onClick={() => { stopAlarm(); setActiveSignal(null); }}
-            className="px-4 py-2 bg-white text-slate-950 font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center gap-1.5">
+            className="px-4 py-2 bg-white text-slate-950 font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0">
             <CheckCircle2 size={15} className="text-emerald-600" /> CIENTE (PARAR SOM)
           </button>
         </div>
@@ -609,9 +609,35 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
         {/* ================= ABA 1: COCKPIT OPERACIONAL ================= */}
         {activeTab === 'cockpit' && (
+          <>
+          {/* FAIXA NOTÍCIAS 3★ — sempre visível, sem rolagem */}
+          <div className="bg-[#0b1222] border border-slate-800 px-3 sm:px-4 py-2.5 rounded-2xl shadow-lg mb-4 flex items-center gap-2.5 sm:gap-3 min-w-0">
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Calendar size={14} className="text-rose-400" />
+              <span className="text-[11px] sm:text-xs font-bold text-slate-200 uppercase font-mono whitespace-nowrap">3★ Hoje</span>
+              {news.length > 0 && (
+                <span className="text-[10px] bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded-full font-mono font-bold">{news.length}</span>
+              )}
+            </div>
+            {news.length === 0 ? (
+              <p className="text-[11px] sm:text-xs text-slate-500 truncate">Nenhum evento de alto impacto hoje — mesa liberada.</p>
+            ) : (
+              <div className="flex gap-2 overflow-x-auto flex-1 min-w-0 py-0.5">
+                {news.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 bg-[#070d1a] border border-slate-800/80 rounded-xl px-2.5 py-1.5 text-[11px] whitespace-nowrap shrink-0 font-mono">
+                    <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1.5 py-0.5 rounded font-bold">{item.country}</span>
+                    <span className="text-slate-200 max-w-[180px] sm:max-w-[260px] truncate">{item.title}</span>
+                    <span className="text-slate-400">
+                      {new Date(item.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             
-            {/* COLUNA ESQUERDA: Sentinela + Status de Sessões + Notícias (4 cols) */}
+            {/* COLUNA ESQUERDA: Sentinela + Janelas Oficiais (4 cols) */}
             <div className="lg:col-span-4 space-y-4">
               
               {/* Card Sentinela Local com Feed Ao Vivo */}
@@ -747,33 +773,6 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 </div>
               </div>
 
-              {/* Notícias 3 Estrelas do Dia */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
-                <div className="flex justify-between items-center mb-3">
-                  <h4 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
-                    <Calendar size={14} className="text-rose-400" /> Notícias 3★ (USD/EUR)
-                  </h4>
-                  <span className="text-[10px] text-slate-500 font-mono">ForexFactory</span>
-                </div>
-                {news.length === 0 ? (
-                  <p className="text-xs text-slate-500 py-3 text-center">Nenhum evento de alto impacto registrado para hoje.</p>
-                ) : (
-                  <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-                    {news.map((item, idx) => (
-                      <div key={idx} className="p-2 bg-[#070d1a] border border-slate-800/80 rounded-xl flex justify-between items-center text-xs">
-                        <div className="min-w-0 pr-2">
-                          <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded font-mono font-bold mr-1.5">{item.country}</span>
-                          <span className="text-slate-200 truncate">{item.title}</span>
-                        </div>
-                        <span className="text-slate-400 font-mono text-[11px] shrink-0">
-                          {new Date(item.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
             </div>
 
             {/* COLUNA CENTRAL: Setups Campeões Permanentes + Setups do Dia (5 cols) */}
@@ -852,7 +851,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
             </div>
 
-            {/* COLUNA DIREITA: Checklist Diário + Calculadora de Lotes (3 cols) */}
+            {/* COLUNA DIREITA: Checklist Diário (3 cols) */}
             <div className="lg:col-span-3 space-y-4">
               
               {/* Checklist de Preparação */}
@@ -880,33 +879,61 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 </div>
               </div>
 
-              {/* Calculadora Rápida de Lotes (NQ vs MNQ) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs">
-                <h4 className="text-xs font-bold text-slate-300 uppercase mb-3 flex items-center gap-1.5">
-                  <DollarSign size={14} className="text-cyan-400" /> Calculadora de Risco (1R = $100)
-                </h4>
-                <div className="space-y-2 text-[11px]">
-                  <div className="p-2.5 bg-[#070d1a] border border-slate-800 rounded-xl flex justify-between items-center">
-                    <span className="text-slate-400">Stop 15 pts (MNQ):</span>
-                    <strong className="text-emerald-400">3.3 Contratos ($30/pt)</strong>
-                  </div>
-                  <div className="p-2.5 bg-[#070d1a] border border-slate-800 rounded-xl flex justify-between items-center">
-                    <span className="text-slate-400">Stop 10 pts (MNQ):</span>
-                    <strong className="text-emerald-400">5.0 Contratos ($100)</strong>
-                  </div>
-                  <div className="p-2.5 bg-[#070d1a] border border-slate-800 rounded-xl flex justify-between items-center">
-                    <span className="text-slate-400">Stop 20 pts (MNQ):</span>
-                    <strong className="text-emerald-400">2.5 Contratos ($100)</strong>
-                  </div>
-                  <p className="text-[10px] text-slate-500 leading-tight">
-                    *Regra: Opere MNQ (Micro) para ajustar os contratos com precisão cirúrgica sem ultrapassar $100 de perda.
-                  </p>
-                </div>
-              </div>
-
             </div>
 
           </div>
+
+          {/* ROTINA DAS OPERAÇÕES — qual setup usar */}
+          <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg mt-4">
+            <h3 className="text-xs font-bold text-slate-300 uppercase font-mono tracking-wider mb-3 flex items-center gap-1.5">
+              <ListChecks size={14} className="text-cyan-400" /> Rotina das Operações
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2.5 font-mono">
+              <div className="p-3 bg-[#070d1a] border border-cyan-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] font-black bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 w-5 h-5 rounded-full flex items-center justify-center shrink-0">1</span>
+                  <strong className="text-xs text-cyan-300">Varredura Macro</strong>
+                </div>
+                <ul className="text-[11px] text-slate-400 leading-relaxed space-y-1">
+                  <li><span className="text-slate-200">Período:</span> Tudo ou 48h • Comparar os 3 Gatilhos</li>
+                  <li><span className="text-slate-200">Pergunta:</span> quem paga mais R por trade? EMA pura ou EMA+FVG?</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-[#070d1a] border border-emerald-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 w-5 h-5 rounded-full flex items-center justify-center shrink-0">2</span>
+                  <strong className="text-xs text-emerald-300">Score de Prop</strong>
+                </div>
+                <ul className="text-[11px] text-slate-400 leading-relaxed space-y-1">
+                  <li>Ignore o $ líquido isolado.</li>
+                  <li><span className="text-slate-200">Ratio = $ Líquido / DD $.</span></li>
+                  <li>Descarte setups com Ratio <span className="text-rose-300 font-bold">&lt; 2.0x</span>.</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-[#070d1a] border border-purple-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/30 w-5 h-5 rounded-full flex items-center justify-center shrink-0">3</span>
+                  <strong className="text-xs text-purple-300">Aprofundar Gatilho</strong>
+                </div>
+                <ul className="text-[11px] text-slate-400 leading-relaxed space-y-1">
+                  <li>Selecione o vencedor do Passo 1.</li>
+                  <li><span className="text-slate-200">Foco:</span> "Aprofundar Gatilho Atual".</li>
+                  <li>Varie distâncias (0.2x, 0.4x, 0.6x) e RR (1:1.5, 1:2, 1:3).</li>
+                </ul>
+              </div>
+              <div className="p-3 bg-[#070d1a] border border-amber-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30 w-5 h-5 rounded-full flex items-center justify-center shrink-0">4</span>
+                  <strong className="text-xs text-amber-300">Validação 24h</strong>
+                </div>
+                <ul className="text-[11px] text-slate-400 leading-relaxed space-y-1">
+                  <li><span className="text-slate-200">Período:</span> 24h — a config gerou trades positivos hoje?</li>
+                  <li>Se negativa: mercado sem liquidez ou consolidação travada.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          </>
         )}
 
         {/* ================= ABA 2: SCANNER IA (GROQ VISION) ================= */}
