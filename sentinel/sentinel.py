@@ -5,6 +5,7 @@ import time
 import re
 import threading
 import ctypes
+import base64
 from datetime import datetime, timezone
 import tkinter as tk
 from tkinter import messagebox
@@ -14,7 +15,7 @@ import numpy as np
 import cv2
 from supabase import create_client
 
-# 1. ATIVA SUPORTE DPI DO WINDOWS (PRECISAO PIXEL-A-PIXEL)
+# 1. SUPORTE DPI DO WINDOWS (PRECISAO PIXEL-A-PIXEL)
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
 except Exception:
@@ -291,21 +292,26 @@ class SentinelApp:
                 estado_atual = self.classificar_estado(frame_bgr)
                 self.lbl_estado.config(text=f"Estado: {estado_atual}")
 
-                # Heartbeat de status no Supabase (sentinel_status_cop)
+                # Heartbeat + Envio da imagem ao vivo em Base64 a cada 1.5s
                 agora = time.time()
-                if agora - last_hb >= 2.0:
+                if agora - last_hb >= 1.5:
                     last_hb = agora
                     try:
+                        # Comprime em JPEG leve com 65% de qualidade (~800 bytes)
+                        _, buf = cv2.imencode('.jpg', frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
+                        b64_img = f"data:image/jpeg;base64,{base64.b64encode(buf).decode('utf-8')}"
+
                         supabase.table("sentinel_status_cop").update({
                             "is_online": True,
                             "current_state": estado_atual,
                             "last_seen": datetime.now(timezone.utc).isoformat(),
-                            "monitored_symbol": self.ativo_atual
+                            "monitored_symbol": self.ativo_atual,
+                            "preview_base64": b64_img
                         }).eq("id", 1).execute()
                     except Exception:
                         pass
 
-                # Disparo de Novo Trade na Mudança de Estado (lumi_signals_cop)
+                # Disparo de Novo Trade na Mudança de Estado
                 if estado_atual != last_state:
                     if estado_atual in ["BUY", "SELL"]:
                         cor = "#34d399" if estado_atual == "BUY" else "#f87171"

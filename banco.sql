@@ -124,3 +124,4 @@ CREATE POLICY "Allow public all daily_checklist_cop" ON daily_checklist_cop FOR 
 -- 10. HABILITA REALTIME
 ALTER PUBLICATION supabase_realtime ADD TABLE sentinel_status_cop;
 ALTER PUBLICATION supabase_realtime ADD TABLE lumi_signals_cop;
+ALTER TABLE sentinel_status_cop ADD COLUMN IF NOT EXISTS preview_base64 TEXT;

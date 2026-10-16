@@ -7,24 +7,31 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
+      includeAssets: ['favicon.svg', 'images/logo_cop_sem_fundo.png'],
       manifest: {
         name: 'Lumi Copilot',
         short_name: 'LumiCopilot',
-        description: 'Sentinela Institucional para TradingView',
-        theme_color: '#020617',
-        background_color: '#020617',
+        description: 'Cockpit Institucional de Trading para NASDAQ',
+        theme_color: '#030712',
+        background_color: '#030712',
         display: 'standalone',
+        orientation: 'portrait-primary',
         icons: [
           {
-            src: 'https://cdn-icons-png.flaticon.com/512/9422/9422977.png',
+            src: '/images/pwa/android/android-launchericon-192-192.png',
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'https://cdn-icons-png.flaticon.com/512/9422/9422977.png',
+            src: '/images/pwa/android/android-launchericon-512-512.png',
             sizes: '512x512',
             type: 'image/png'
+          },
+          {
+            src: '/images/pwa/android/android-launchericon-512-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable'
           }
         ]
       }

@@ -19,7 +19,12 @@ export default function App() {
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
-  const [sentinel, setSentinel] = useState({ is_online: false, current_state: 'DESCONECTADO', monitored_symbol: 'MNQ' });
+  const [sentinel, setSentinel] = useState({ 
+    is_online: false, 
+    current_state: 'DESCONECTADO', 
+    monitored_symbol: 'MNQ',
+    preview_base64: null 
+  });
 
   // Notícias Econômicas
   const [news, setNews] = useState([]);
@@ -34,9 +39,24 @@ export default function App() {
   // Contas de Mesa e Diário
   const [accounts, setAccounts] = useState([]);
   const [trades, setTrades] = useState([]);
-  const [newTrade, setNewTrade] = useState({ account_id: '', symbol: 'MNQ', direction: 'BUY', setup_name: 'Setup 1 - Power Hour', result_r: 1.5, result_usd: 150, rule_respected: true, notes: '' });
+  const [newTrade, setNewTrade] = useState({ 
+    account_id: '', 
+    symbol: 'MNQ', 
+    direction: 'BUY', 
+    setup_name: 'Setup 1 - Power Hour', 
+    result_r: 1.5, 
+    result_usd: 150, 
+    rule_respected: true, 
+    notes: '' 
+  });
   const [showAddAccount, setShowAddAccount] = useState(false);
-  const [accountForm, setAccountForm] = useState({ firm_name: 'Apex Trader Funding', account_name: 'APEX-50K-01', size_usd: 50000, cost_usd: 40, status: 'EM_ANDAMENTO' });
+  const [accountForm, setAccountForm] = useState({ 
+    firm_name: 'Apex Trader Funding', 
+    account_name: 'APEX-50K-01', 
+    size_usd: 50000, 
+    cost_usd: 40, 
+    status: 'EM_ANDAMENTO' 
+  });
 
   // Checklist Diário
   const [checklist, setChecklist] = useState(() => {
@@ -150,7 +170,6 @@ export default function App() {
         if (!res.ok) return;
         const data = await res.json();
         
-        // Filtra apenas notícias de USD e EUR de ALTO IMPACTO (High)
         const todayStr = new Date().toISOString().split('T')[0];
         const highNews = data.filter(item => 
           item.impact === 'High' && 
@@ -159,7 +178,6 @@ export default function App() {
         );
         setNews(highNews);
 
-        // Alerta de notícia nos próximos 15 minutos
         const nowMs = Date.now();
         highNews.forEach(item => {
           const itemTime = new Date(item.date).getTime();
@@ -175,7 +193,7 @@ export default function App() {
     };
 
     fetchNews();
-    const interval = setInterval(fetchNews, 120000); // Checa a cada 2 min
+    const interval = setInterval(fetchNews, 120000);
     return () => clearInterval(interval);
   }, [soundEnabled]);
 
@@ -282,7 +300,6 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
           const parsed = JSON.parse(resData.choices[0].message.content);
           if (parsed.setups && parsed.setups.length > 0) {
             setScannedSetups(parsed.setups);
-            // Salva no Supabase
             await supabase.from('daily_setups_cop').delete().neq('id', 0);
             for (const item of parsed.setups) {
               await supabase.from('daily_setups_cop').insert(item);
@@ -342,18 +359,27 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
       {/* HEADER DE COMANDO INSTITUCIONAL */}
       <header className="w-full bg-[#0b1222] border-b border-slate-800 px-4 py-3 sm:px-6 flex flex-col md:flex-row justify-between items-center gap-3 sticky top-0 z-40 shadow-xl">
         <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl text-white shadow-lg shadow-cyan-900/40">
-              <Zap size={20} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm sm:text-base font-black tracking-wider text-white">LUMI COPILOT</h1>
-                <span className="text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold">PRO DESK</span>
-              </div>
-              <p className="text-[10px] text-slate-400 font-mono">NASDAQ Scalp • Dublin Hub</p>
-            </div>
-          </div>
+          
+          {/* LOGO OFICIAL LUMI COPILOT */}
+<div className="flex items-center gap-2.5">
+  <div className="relative group">
+    <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl blur opacity-40 group-hover:opacity-75 transition duration-300"></div>
+    <div className="relative p-1 bg-[#070d1a] border border-cyan-500/30 rounded-xl flex items-center justify-center shadow-lg">
+      <img 
+        src="/images/logo_cop_sem_fundo.png" 
+        alt="Lumi Copilot" 
+        className="w-8 h-8 object-contain"
+      />
+    </div>
+  </div>
+  <div>
+    <div className="flex items-center gap-2">
+      <h1 className="text-sm sm:text-base font-black tracking-wider text-white">LUMI COPILOT</h1>
+      <span className="text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold">PRO DESK</span>
+    </div>
+    <p className="text-[10px] text-slate-400 font-mono">NASDAQ Scalp • Dublin Hub</p>
+  </div>
+</div>
 
           {/* RELÓGIOS DE FUSO */}
           <div className="flex items-center gap-2 font-mono text-[11px] bg-[#070d1a] border border-slate-800 px-3 py-1.5 rounded-xl">
@@ -454,17 +480,21 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
             {/* COLUNA ESQUERDA: Sentinela + Status de Sessões + Notícias (4 cols) */}
             <div className="lg:col-span-4 space-y-4">
               
-              {/* Card Sentinela Local */}
+              {/* Card Sentinela Local com Feed Ao Vivo */}
               <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-xs font-bold text-slate-400 uppercase font-mono tracking-wider flex items-center gap-1.5">
                     <Eye size={14} className="text-cyan-400" /> Sentinela OpenCV
                   </span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${sentinel.is_online ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400'}`}>
-                    {sentinel.is_online ? 'CONECTADA' : 'DESCONECTADA'}
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono flex items-center gap-1.5 ${
+                    sentinel.is_online ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400'
+                  }`}>
+                    {sentinel.is_online && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
+                    {sentinel.is_online ? 'ONLINE' : 'DESCONECTADA'}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono mb-3">
                   <div className="bg-[#070d1a] p-2.5 rounded-xl border border-slate-800/80">
                     <span className="text-[10px] text-slate-500 block">Ativo em Foco</span>
                     <strong className="text-purple-300 text-sm">{sentinel.monitored_symbol || 'MNQ'}</strong>
@@ -473,6 +503,29 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                     <span className="text-[10px] text-slate-500 block">Estado Tela</span>
                     <strong className="text-white text-sm">{sentinel.current_state}</strong>
                   </div>
+                </div>
+
+                {/* FEED VISUAL EM TEMPO REAL (O QUE A SENTINELA ESTÁ VENDO) */}
+                <div className="bg-[#040812] border border-slate-800/90 rounded-xl p-2.5 flex flex-col items-center">
+                  <div className="w-full flex justify-between items-center mb-1.5 text-[9px] font-mono text-slate-500">
+                    <span className="flex items-center gap-1">
+                      <span className={`w-1.5 h-1.5 rounded-full ${sentinel.is_online ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                      FEED VISUAL (ROI)
+                    </span>
+                    <span>1.5s refresh</span>
+                  </div>
+
+                  {sentinel.preview_base64 && sentinel.is_online ? (
+                    <img 
+                      src={sentinel.preview_base64} 
+                      alt="O que a sentinela vê" 
+                      className="max-h-12 w-auto object-contain rounded border border-slate-700/60 shadow-inner"
+                    />
+                  ) : (
+                    <div className="py-2.5 text-center text-[10px] text-slate-600 font-mono">
+                      {sentinel.is_online ? 'Aguardando primeiro frame...' : 'Inicie a Sentinela no PC para ver a tela'}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -705,7 +758,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                         <strong className="text-cyan-300">#{s.rank_pos} • {s.trigger_name} ({s.emas})</strong>
                         <span className="text-emerald-400 font-bold">+${s.net_usd} (DD: ${s.dd_usd})</span>
                       </div>
-                      <p className="text-[11px] text-slate-400">Stop: {s.stop_type} | RR: {s.rr} | Win: {s.win_rate} | R Total: {s.r_total}</p>
+                      <p className="text-[11px] text-slate-400">Stop: {s.stop_type} | RR: {s.rr} | Win: {s.win_rate} | R Tot: {s.r_total}</p>
                       {s.notes && <p className="text-[10px] text-slate-500 italic mt-1">{s.notes}</p>}
                     </div>
                   ))}
