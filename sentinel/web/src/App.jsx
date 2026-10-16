@@ -11,10 +11,7 @@ const SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2eWxscGJxdGFoeHJxc2pqemdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzU3NzEsImV4cCI6MjEwNjgxMTc3MX0.7qIsu2oZermD9uPA8ggSfNZuKDZH-_ifs2jJjeTX6XM";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// Modelo de visão usado no Scanner IA (troque aqui se a Groq descontinuar este)
-const GROQ_VISION_MODEL = "llama-3.2-11b-vision-preview";
-
-// Extrai a mensagem real de erro da API Groq (ex: 401 chave inválida, 404 modelo inexistente, 429 cota)
+// Extrai a mensagem real de erro da API Groq
 const readGroqError = async (res) => {
   try {
     const data = await res.json();
@@ -31,10 +28,10 @@ export default function App() {
   // Sentinela e Sinais
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
-  const [selectedSignals, setSelectedSignals] = useState([]); // ids marcados no gerenciador
+  const [selectedSignals, setSelectedSignals] = useState([]);
   const [showDeleteSignalsModal, setShowDeleteSignalsModal] = useState(false);
   const [isDeletingSignals, setIsDeletingSignals] = useState(false);
-  const [feedback, setFeedback] = useState(null); // {title, message, tone, actionLabel?, onAction?}
+  const [feedback, setFeedback] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [sentinel, setSentinel] = useState({ 
     is_online: false, 
@@ -47,22 +44,28 @@ export default function App() {
   const [news, setNews] = useState([]);
   const [activeNewsAlert, setActiveNewsAlert] = useState(null);
 
-  // Groq Vision & Scanner
-  const [groqKey, setGroqKey] = useState(localStorage.getItem('lumi_groq_key') || '');
+  // Groq Vision & Scanner (Compatível com prop-copilot: lê tanto 'lumi_groq_key' quanto 'ai_key')
+  const [groqKey, setGroqKey] = useState(
+    localStorage.getItem('lumi_groq_key') || localStorage.getItem('ai_key') || ''
+  );
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scannedSetups, setScannedSetups] = useState([]);
-  // 'missing' (amarelo) | 'checking' (validando) | 'ok' (verde) | 'error' (vermelho)
   const [groqStatus, setGroqStatus] = useState(
-    localStorage.getItem('lumi_groq_key') ? 'checking' : 'missing'
+    (localStorage.getItem('lumi_groq_key') || localStorage.getItem('ai_key')) ? 'checking' : 'missing'
   );
+  const [groqError, setGroqError] = useState(null);
+  const [activeVisionModel, setActiveVisionModel] = useState('llama-3.2-11b-vision-preview');
 
-  // Valida a chave em 2 etapas (retorna {ok, error}) e guarda o detalhe em groqError:
-  // 1ª autenticação (/models, sem gastar cota) • 2ª modelo de visão (1 token, valida o modelo usado no Scanner)
-  const [groqError, setGroqError] = useState(null); // {step, status, message}
+  // Validação dinâmica idêntica ao prop-copilot-frontend:
+  // Consulta /models para autenticar a chave e já descobre o modelo de visão disponível
   const validateGroqKey = async (key) => {
     const k = (key || '').trim();
-    if (!k) { setGroqStatus('missing'); setGroqError(null); return { ok: false, error: null }; }
+    if (!k) { 
+      setGroqStatus('missing'); 
+      setGroqError(null); 
+      return { ok: false, error: null }; 
+    }
     setGroqStatus('checking');
     setGroqError(null);
     try {
@@ -75,29 +78,28 @@ export default function App() {
         setGroqError(error);
         return { ok: false, error };
       }
-      const resChat = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${k}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: GROQ_VISION_MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
-      });
-      if (!resChat.ok) {
-        const error = { step: `Modelo ${GROQ_VISION_MODEL}`, status: resChat.status, message: await readGroqError(resChat) };
-        setGroqStatus('error');
-        setGroqError(error);
-        return { ok: false, error };
+      
+      const modelsData = await resModels.json();
+      if (modelsData.data && modelsData.data.length > 0) {
+        const ids = modelsData.data.map(m => m.id);
+        // Busca dinamicamente qualquer modelo de visão ativo na sua conta
+        const foundVision = ids.find(id => id.includes('vision'));
+        if (foundVision) {
+          setActiveVisionModel(foundVision);
+        }
       }
+
       setGroqStatus('ok');
       setGroqError(null);
       return { ok: true, error: null };
     } catch (e) {
-      const error = { step: 'Rede', status: 0, message: `Sem resposta da API Groq (${e.message}). Verifique internet/adblock.` };
+      const error = { step: 'Rede', status: 0, message: `Sem resposta da API Groq (${e.message}). Verifique conexão.` };
       setGroqStatus('error');
       setGroqError(error);
       return { ok: false, error };
     }
   };
 
-  // Valida automaticamente ao abrir o app quando já existe chave salva
   useEffect(() => {
     if (groqKey) validateGroqKey(groqKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,7 +158,6 @@ export default function App() {
     return audioContextRef.current;
   };
 
-  // Som para sinais de Trade
   const triggerAudioPulse = (type) => {
     if (!audioContextRef.current) return;
     try {
@@ -181,7 +182,6 @@ export default function App() {
     } catch (e) { console.error(e); }
   };
 
-  // Som para Notícias 3 Estrelas (Tom de sonar / sino tecnológico suave)
   const triggerNewsChime = () => {
     if (!audioContextRef.current) return;
     try {
@@ -217,7 +217,7 @@ export default function App() {
     alarmTimeoutRef.current = setTimeout(() => stopAlarm(), 30000);
   };
 
-  // Atualização dos Relógios
+  // Relógios
   useEffect(() => {
     const updateClocks = () => {
       const now = new Date();
@@ -229,7 +229,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Busca Notícias de Alto Impacto (FairEconomy / ForexFactory JSON)
+  // Notícias de Alto Impacto
   useEffect(() => {
     const fetchNews = async () => {
       try {
@@ -264,7 +264,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [soundEnabled]);
 
-  // Carrega e sincroniza Dados do Supabase
+  // Sincronização Supabase
   useEffect(() => {
     supabase.from('lumi_signals_cop').select('*').order('created_at', { ascending: false }).limit(40)
       .then(r => r.data && setSignals(r.data));
@@ -299,12 +299,13 @@ export default function App() {
     };
   }, [soundEnabled]);
 
-  // Processamento de Imagem com Groq Vision
+  // Scanner de Otimização via Groq Vision
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (!groqKey) {
+    const key = (groqKey || '').trim();
+    if (!key) {
       setFeedback({
         title: "Chave Groq necessária",
         message: "Por favor, adicione sua API Key do Groq nas configurações primeiro!",
@@ -317,6 +318,22 @@ export default function App() {
 
     setIsScanning(true);
     try {
+      // 1. Descobre dinamicamente o melhor modelo de visão ativo na sua conta
+      let visionModel = activeVisionModel;
+      try {
+        const resModels = await fetch('https://api.groq.com/openai/v1/models', {
+          headers: { 'Authorization': `Bearer ${key}` }
+        });
+        if (resModels.ok) {
+          const mData = await resModels.json();
+          const ids = mData?.data?.map(m => m.id) || [];
+          const found = ids.find(id => id.includes('vision'));
+          if (found) visionModel = found;
+        }
+      } catch (errCheck) {
+        console.log("Usando modelo padrão:", visionModel);
+      }
+
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64Data = reader.result;
@@ -324,11 +341,11 @@ export default function App() {
         const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${groqKey.trim()}`,
+            "Authorization": `Bearer ${key}`,
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            model: GROQ_VISION_MODEL,
+            model: visionModel,
             messages: [
               {
                 role: "user",
@@ -370,7 +387,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         const resData = await response.json();
         if (resData.error) {
           setGroqStatus('error');
-          const apiError = { step: `Scanner IA (${GROQ_VISION_MODEL})`, status: response.status, message: resData.error.message || 'Erro desconhecido' };
+          const apiError = { step: `Scanner IA (${visionModel})`, status: response.status, message: resData.error.message || 'Erro desconhecido' };
           setGroqError(apiError);
           setFeedback({
             title: "Falha no Scanner IA",
@@ -437,7 +454,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     localStorage.setItem('lumi_checklist', JSON.stringify(reset));
   };
 
-  // Gerenciador de Oportunidades (sinais da sentinela)
+  // Gerenciador de Sinais
   const toggleSignal = (id) => {
     setSelectedSignals(prev =>
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
@@ -473,7 +490,6 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     }
   };
 
-  // PnL Acumulado
   const totalPnL = trades.reduce((acc, t) => acc + Number(t.result_usd || 0), 0);
   const totalR = trades.reduce((acc, t) => acc + Number(t.result_r || 0), 0);
 
@@ -485,25 +501,25 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-start min-w-0">
           
           {/* LOGO OFICIAL LUMI COPILOT */}
-<div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
-  <div className="relative group shrink-0">
-    <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl blur opacity-40 group-hover:opacity-75 transition duration-300"></div>
-    <div className="relative p-1 bg-[#070d1a] border border-cyan-500/30 rounded-xl flex items-center justify-center shadow-lg">
-      <img 
-        src="/images/logo_cop_sem_fundo.png" 
-        alt="Lumi Copilot" 
-        className="w-7 h-7 sm:w-8 sm:h-8 object-contain"
-      />
-    </div>
-  </div>
-  <div className="min-w-0">
-    <div className="flex items-center gap-1.5 sm:gap-2">
-      <h1 className="text-xs sm:text-base font-black tracking-wider text-white whitespace-nowrap">LUMI COPILOT</h1>
-      <span className="text-[8px] sm:text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">PRO DESK</span>
-    </div>
-    <p className="text-[9px] sm:text-[10px] text-slate-400 font-mono truncate">NASDAQ Scalp • Dublin Hub</p>
-  </div>
-</div>
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
+            <div className="relative group shrink-0">
+              <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl blur opacity-40 group-hover:opacity-75 transition duration-300"></div>
+              <div className="relative p-1 bg-[#070d1a] border border-cyan-500/30 rounded-xl flex items-center justify-center shadow-lg">
+                <img 
+                  src="/images/logo_cop_sem_fundo.png" 
+                  alt="Lumi Copilot" 
+                  className="w-7 h-7 sm:w-8 sm:h-8 object-contain"
+                />
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h1 className="text-xs sm:text-base font-black tracking-wider text-white whitespace-nowrap">LUMI COPILOT</h1>
+                <span className="text-[8px] sm:text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">PRO DESK</span>
+              </div>
+              <p className="text-[9px] sm:text-[10px] text-slate-400 font-mono truncate">NASDAQ Scalp • Dublin Hub</p>
+            </div>
+          </div>
 
           {/* RELÓGIOS DE FUSO */}
           <div className="flex items-center gap-1.5 sm:gap-2 font-mono text-[10px] sm:text-[11px] bg-[#070d1a] border border-slate-800 px-2 sm:px-3 py-1.5 rounded-xl shrink-0">
@@ -563,7 +579,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
             }`}
             title={
-              groqStatus === 'ok' ? 'Groq conectado — chave válida'
+              groqStatus === 'ok' ? `Groq conectado — modelo: ${activeVisionModel}`
               : groqStatus === 'error' ? 'Falha na chave Groq — clique para corrigir'
               : groqStatus === 'checking' ? 'Validando chave Groq...'
               : 'Sem chave Groq — clique para configurar'
@@ -573,7 +589,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         </div>
       </header>
 
-      {/* ALERTA DE NOTÍCIA 3 ESTRELAS PISCANDO (SE HOUVER EM 15 MIN) */}
+      {/* ALERTA DE NOTÍCIA 3 ESTRELAS PISCANDO */}
       {activeNewsAlert && (
         <div className="bg-rose-950/90 border-b border-rose-500/60 px-3 sm:px-4 py-2 flex flex-col sm:flex-row sm:items-center gap-1.5 sm:justify-between text-xs text-rose-200 animate-pulse font-mono">
           <div className="flex items-center gap-2 min-w-0">
@@ -610,7 +626,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         {/* ================= ABA 1: COCKPIT OPERACIONAL ================= */}
         {activeTab === 'cockpit' && (
           <>
-          {/* FAIXA NOTÍCIAS 3★ — sempre visível, sem rolagem */}
+          {/* FAIXA NOTÍCIAS 3★ */}
           <div className="bg-[#0b1222] border border-slate-800 px-3 sm:px-4 py-2.5 rounded-2xl shadow-lg mb-4 flex items-center gap-2.5 sm:gap-3 min-w-0">
             <div className="flex items-center gap-1.5 shrink-0">
               <Calendar size={14} className="text-rose-400" />
@@ -635,9 +651,10 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               </div>
             )}
           </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
             
-            {/* COLUNA ESQUERDA: Sentinela + Janelas Oficiais (4 cols) */}
+            {/* COLUNA ESQUERDA: Sentinela + Oportunidades + Janelas Oficiais (4 cols) */}
             <div className="lg:col-span-4 space-y-4">
               
               {/* Card Sentinela Local com Feed Ao Vivo */}
@@ -665,7 +682,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                   </div>
                 </div>
 
-                {/* FEED VISUAL EM TEMPO REAL (O QUE A SENTINELA ESTÁ VENDO) */}
+                {/* FEED VISUAL EM TEMPO REAL */}
                 <div className="bg-[#040812] border border-slate-800/90 rounded-xl p-2.5 flex flex-col items-center">
                   <div className="w-full flex justify-between items-center mb-1.5 text-[9px] font-mono text-slate-500">
                     <span className="flex items-center gap-1">
@@ -685,7 +702,8 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                     <div className="py-2.5 text-center text-[10px] text-slate-600 font-mono">
                       {sentinel.is_online ? 'Aguardando primeiro frame...' : 'Inicie a Sentinela no PC para ver a tela'}
                     </div>
-                )}
+                  )}
+                </div>
               </div>
 
               {/* Oportunidades do Dia (Sinais da Sentinela) */}
@@ -745,9 +763,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 )}
               </div>
 
-            </div>
-
-              {/* Linha do Tempo de Sessões (Fuso Dublin) */}
+              {/* Janelas Oficiais (Dublin) */}
               <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs">
                 <h4 className="text-xs font-bold text-slate-300 uppercase mb-3 flex items-center gap-1.5">
                   <Clock size={14} className="text-amber-400" /> Janelas Oficiais (Dublin)
@@ -854,7 +870,6 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
             {/* COLUNA DIREITA: Checklist Diário (3 cols) */}
             <div className="lg:col-span-3 space-y-4">
               
-              {/* Checklist de Preparação */}
               <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
                 <div className="flex justify-between items-center mb-3">
                   <h4 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
@@ -883,7 +898,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
           </div>
 
-          {/* ROTINA DAS OPERAÇÕES — qual setup usar */}
+          {/* ROTINA DAS OPERAÇÕES */}
           <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg mt-4">
             <h3 className="text-xs font-bold text-slate-300 uppercase font-mono tracking-wider mb-3 flex items-center gap-1.5">
               <ListChecks size={14} className="text-cyan-400" /> Rotina das Operações
@@ -944,8 +959,11 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 <Sparkles size={28} />
               </div>
               <h2 className="text-lg font-bold text-white mb-1">Scanner de Otimizador com Groq Vision</h2>
-              <p className="text-xs text-slate-400 mb-6 max-w-md mx-auto">
+              <p className="text-xs text-slate-400 mb-2 max-w-md mx-auto">
                 Tire um print da tabela do otimizador no TradingView e envie abaixo. A IA fará a leitura automática dos 3 melhores setups para a sessão.
+              </p>
+              <p className="text-[11px] text-cyan-400/80 font-mono mb-6">
+                Modelo ativo: <code className="bg-[#070d1a] px-2 py-0.5 rounded border border-cyan-500/30">{activeVisionModel}</code>
               </p>
 
               <div className="border-2 border-dashed border-slate-700 hover:border-cyan-500 rounded-2xl p-8 transition-all bg-[#070d1a]">
@@ -960,7 +978,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 <label htmlFor="print-upload" className="cursor-pointer flex flex-col items-center gap-2">
                   <Upload size={32} className="text-slate-400" />
                   <span className="text-xs font-bold text-slate-300">
-                    {isScanning ? "Analisando imagem com Llama 3.2 Vision..." : "Clique para selecionar ou arraste o print da tabela"}
+                    {isScanning ? `Analisando tabela com ${activeVisionModel}...` : "Clique para selecionar ou arraste o print da tabela"}
                   </span>
                   <span className="text-[10px] text-slate-500 font-mono">PNG, JPG ou Screenshot</span>
                 </label>
@@ -1214,7 +1232,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 : groqStatus === 'checking' ? 'text-cyan-300'
                 : 'text-amber-300'
               }>
-                {groqStatus === 'ok' ? 'Chave válida — Groq conectado'
+                {groqStatus === 'ok' ? `Chave válida — modelo: ${activeVisionModel}`
                 : groqStatus === 'error' ? 'Chave inválida ou sem conexão'
                 : groqStatus === 'checking' ? 'Validando chave...'
                 : 'Nenhuma chave configurada'}
@@ -1235,6 +1253,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 onClick={async () => {
                   const k = groqKey.trim();
                   localStorage.setItem('lumi_groq_key', k);
+                  localStorage.setItem('ai_key', k);
                   setShowKeyModal(false);
                   const { ok, error } = await validateGroqKey(k);
                   if (!ok && k) {
@@ -1287,7 +1306,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
         </div>
       )}
 
-      {/* MODAL DE AVISO GENÉRICO (substitui alert nativo) */}
+      {/* MODAL DE AVISO GENÉRICO */}
       {feedback && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#0b1222] border border-slate-800 p-6 rounded-2xl w-full max-w-md shadow-2xl">
