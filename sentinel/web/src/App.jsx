@@ -36,6 +36,7 @@ export default function App() {
   // Sentinela e Sinais
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
+  const lastSignalIdRef = useRef(0); // maior id de sinal já visto (base do polling fallback)
   const [selectedSignals, setSelectedSignals] = useState([]);
   const [showDeleteSignalsModal, setShowDeleteSignalsModal] = useState(false);
   const [isDeletingSignals, setIsDeletingSignals] = useState(false);
@@ -296,7 +297,12 @@ export default function App() {
   // Sincronização Supabase
   useEffect(() => {
     supabase.from('lumi_signals_cop').select('*').order('created_at', { ascending: false }).limit(40)
-      .then(r => r.data && setSignals(r.data));
+      .then(r => {
+        if (r.data) {
+          setSignals(r.data);
+          if (r.data.length > 0) lastSignalIdRef.current = Math.max(...r.data.map(s => Number(s.id)));
+        }
+      });
 
     supabase.from('sentinel_status_cop').select('*').eq('id', 1).single()
       .then(r => r.data && setSentinel(r.data));
@@ -313,19 +319,42 @@ export default function App() {
     const channel = supabase.channel('lumi_copilot_v3')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lumi_signals_cop' }, payload => {
         const s = payload.new;
-        setSignals(prev => [s, ...prev]);
+        lastSignalIdRef.current = Math.max(lastSignalIdRef.current, Number(s.id));
+        setSignals(prev => [s, ...prev].slice(0, 40));
         setActiveSignal(s);
         if (soundEnabled) startAlarm30s(s.direction);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sentinel_status_cop' }, payload => {
         setSentinel(payload.new);
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status !== 'SUBSCRIBED') console.warn('[realtime sinais]', status);
+      });
 
     return () => {
       stopAlarm();
       supabase.removeChannel(channel);
     };
+  }, [soundEnabled]);
+
+  // Fallback anti-falha: polling a cada 5s detecta sinais novos mesmo se o
+  // realtime (websocket) estiver bloqueado — dispara o mesmo alerta + som
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const { data } = await supabase.from('lumi_signals_cop')
+          .select('*').gt('id', lastSignalIdRef.current).order('id', { ascending: true });
+        if (data && data.length > 0) {
+          const latest = data[data.length - 1];
+          lastSignalIdRef.current = Number(latest.id);
+          setSignals(prev => [...data.slice().reverse(), ...prev].slice(0, 40));
+          setActiveSignal(latest);
+          if (soundEnabled) startAlarm30s(latest.direction);
+        }
+      } catch (e) { /* polling silencioso */ }
+    };
+    const t = setInterval(poll, 5000);
+    return () => clearInterval(t);
   }, [soundEnabled]);
 
   // Scanner de Otimização via Groq Vision
