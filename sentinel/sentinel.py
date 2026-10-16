@@ -38,6 +38,36 @@ SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co"
 SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2eWxscGJxdGFoeHJxc2pqemdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzU3NzEsImV4cCI6MjEwNjgxMTc3MX0.7qIsu2oZermD9uPA8ggSfNZuKDZH-_ifs2jJjeTX6XM"
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
+def listar_monitores():
+    """Retorna a lista de monitores via mss: [{index, left, top, width, height}].
+    left/top são coordenadas GLOBAIS do desktop virtual (podem ser negativas
+    quando o monitor 2 está à esquerda do principal)."""
+    try:
+        with mss.mss() as sct:
+            monitores = []
+            for i, m in enumerate(sct.monitors[1:], start=1):
+                monitores.append({
+                    "index": i,
+                    "left": int(m["left"]),
+                    "top": int(m["top"]),
+                    "width": int(m["width"]),
+                    "height": int(m["height"]),
+                })
+            if monitores:
+                return monitores
+    except Exception:
+        pass
+    # Fallback: apenas o monitor principal
+    user32 = ctypes.windll.user32
+    return [{
+        "index": 1,
+        "left": 0,
+        "top": 0,
+        "width": user32.GetSystemMetrics(0),
+        "height": user32.GetSystemMetrics(1),
+    }]
+
+
 def detectar_ativo_tradingview():
     if not HAS_WIN32:
         return "MNQ"
@@ -70,19 +100,28 @@ def detectar_ativo_tradingview():
     return "MNQ"
 
 class FullscreenCalibrator:
-    def __init__(self, parent_gui):
+    def __init__(self, parent_gui, monitor):
         self.parent = parent_gui
+        self.monitor = monitor
         self.top = tk.Toplevel()
-        user32 = ctypes.windll.user32
-        sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
-        self.top.geometry(f"{sw}x{sh}+0+0")
+        w, h = monitor["width"], monitor["height"]
+        # Posiciona o overlay EXATAMENTE sobre o monitor escolhido.
+        # (O '-fullscreen' do tkinter cobre só o monitor principal,
+        #  por isso usamos geometry com as coordenadas globais.)
+        self.top.overrideredirect(True)
+        self.top.geometry(f"{w}x{h}{monitor['left']:+d}{monitor['top']:+d}")
         self.top.attributes('-alpha', 0.28)
-        self.top.attributes('-fullscreen', True)
         self.top.attributes('-topmost', True)
         self.top.config(cursor="cross")
+        self.top.title(f"Calibrar — Monitor {monitor['index']} (ESC cancela)")
 
         self.canvas = tk.Canvas(self.top, cursor="cross", bg="#0284c7")
         self.canvas.pack(fill="both", expand=True)
+        # Dica fixa no canto do monitor sendo calibrado
+        self.canvas.create_text(
+            12, 12, anchor="nw",
+            text=f"MONITOR {monitor['index']} • Arraste sobre a célula de status • ESC cancela",
+            fill="white", font=("Segoe UI", 11, "bold"))
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
@@ -92,9 +131,12 @@ class FullscreenCalibrator:
         self.rect = None
 
     def on_press(self, e):
+        # Globais (para salvar no roi_config) + relativas (para desenhar)
         self.start_x = e.x_root
         self.start_y = e.y_root
-        self.rect = self.canvas.create_rectangle(self.x, self.y, 1, 1, outline='#f43f5e', width=3)
+        rx, ry = e.x_root - self.monitor["left"], e.y_root - self.monitor["top"]
+        self.rel_x, self.rel_y = rx, ry
+        self.rect = self.canvas.create_rectangle(rx, ry, rx + 1, ry + 1, outline='#f43f5e', width=3)
 
     @property
     def x(self): return self.start_x
@@ -102,7 +144,9 @@ class FullscreenCalibrator:
     def y(self): return self.start_y
 
     def on_drag(self, e):
-        self.canvas.coords(self.rect, self.start_x, self.start_y, e.x_root, e.y_root)
+        rx = e.x_root - self.monitor["left"]
+        ry = e.y_root - self.monitor["top"]
+        self.canvas.coords(self.rect, self.rel_x, self.rel_y, rx, ry)
 
     def on_release(self, e):
         x1, x2 = min(self.start_x, e.x_root), max(self.start_x, e.x_root)
@@ -197,8 +241,53 @@ class SentinelApp:
                 self.roi = None
 
     def calibrar(self):
+        monitores = listar_monitores()
+        if len(monitores) == 1:
+            self.abrir_overlay(monitores[0])
+        else:
+            self.escolher_monitor(monitores)
+
+    def escolher_monitor(self, monitores):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Calibrar — Escolher monitor")
+        dlg.configure(bg="#0d1527")
+        dlg.attributes('-topmost', True)
+        dlg.resizable(False, False)
+        # Centraliza o diálogo no monitor principal
+        dlg.geometry("+%d+%d" % (
+            self.root.winfo_screenwidth() // 2 - 190,
+            self.root.winfo_screenheight() // 2 - 110))
+
+        tk.Label(dlg, text="Em qual monitor está o TradingView?",
+                 font=("Segoe UI", 10, "bold"), fg="#e2e8f0", bg="#0d1527"
+                 ).pack(padx=20, pady=(16, 10))
+
+        var = tk.IntVar(value=monitores[0]["index"])
+        for m in monitores:
+            texto = (f"Monitor {m['index']} — {m['width']}x{m['height']} "
+                     f"(x={m['left']}, y={m['top']})")
+            tk.Radiobutton(dlg, text=texto, variable=var, value=m["index"],
+                           font=("Segoe UI", 9), fg="#e2e8f0", bg="#0d1527",
+                           selectcolor="#1e293b", activebackground="#0d1527",
+                           activeforeground="#38bdf8", anchor="w"
+                           ).pack(fill="x", padx=20, pady=2)
+
+        btns = tk.Frame(dlg, bg="#0d1527")
+        btns.pack(fill="x", padx=20, pady=14)
+        tk.Button(btns, text="Cancelar", font=("Segoe UI", 9),
+                  bg="#1e293b", fg="#94a3b8", relief="flat", padx=12, pady=6,
+                  command=dlg.destroy).pack(side="left")
+        tk.Button(btns, text="Calibrar este monitor ➜", font=("Segoe UI", 9, "bold"),
+                  bg="#0284c7", fg="#ffffff", relief="flat", padx=12, pady=6,
+                  command=lambda: (dlg.destroy(),
+                                   self.abrir_overlay(
+                                       next(m for m in monitores
+                                            if m["index"] == var.get())))
+                  ).pack(side="right")
+
+    def abrir_overlay(self, monitor):
         self.root.withdraw()
-        self.root.after(400, lambda: FullscreenCalibrator(self))
+        self.root.after(400, lambda: FullscreenCalibrator(self, monitor))
 
     def on_calibrado(self, coords):
         self.roi = coords
