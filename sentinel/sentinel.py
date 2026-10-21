@@ -15,6 +15,11 @@ import numpy as np
 import cv2
 from supabase import create_client
 
+# Dependências da Ponte Tradovate
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from tradovate_client import TradovateClient
+
 # 1. SUPORTE DPI DO WINDOWS (PRECISAO PIXEL-A-PIXEL)
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -38,10 +43,61 @@ SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co"
 SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2eWxscGJxdGFoeHJxc2pqemdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzU3NzEsImV4cCI6MjEwNjgxMTc3MX0.7qIsu2oZermD9uPA8ggSfNZuKDZH-_ifs2jJjeTX6XM"
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
+# Instância do Cliente Tradovate
+tradovate = TradovateClient()
+
+# Servidor Flask Local para Comunicação com o Cockpit Web
+bridge_app = Flask(__name__)
+CORS(bridge_app)
+
+@bridge_app.route("/bridge/status", methods=["GET"])
+def bridge_status():
+    return jsonify({
+        "status": "ONLINE",
+        "env": tradovate.env,
+        "max_sl_cap": tradovate.max_sl_cap,
+        "user_logged": tradovate.username if tradovate.username else "NÃO CONFIGURADO"
+    })
+
+@bridge_app.route("/bridge/accounts", methods=["GET"])
+def bridge_accounts():
+    try:
+        contas = tradovate.listar_contas()
+        return jsonify({"ok": True, "accounts": contas})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@bridge_app.route("/bridge/execute", methods=["POST"])
+def bridge_execute():
+    data = request.json or {}
+    account_ids = data.get("account_ids", [])
+    symbol = data.get("symbol", "MNQ")
+    direction = data.get("direction", "BUY")
+    qty = data.get("qty", 1)
+    sl_points = data.get("sl_points", 15.0)
+    tp_points = data.get("tp_points", 30.0)
+
+    if not account_ids:
+        return jsonify({"ok": False, "error": "Nenhuma conta selecionada!"}), 400
+
+    try:
+        resultados = tradovate.executar_operacao(
+            account_ids=account_ids,
+            symbol=symbol,
+            direction=direction,
+            qty=qty,
+            sl_points=sl_points,
+            tp_points=tp_points
+        )
+        return jsonify({"ok": True, "results": resultados})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+def iniciar_servidor_bridge():
+    port = int(os.getenv("BRIDGE_PORT", 8765))
+    bridge_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+
 def listar_monitores():
-    """Retorna a lista de monitores via mss: [{index, left, top, width, height}].
-    left/top são coordenadas GLOBAIS do desktop virtual (podem ser negativas
-    quando o monitor 2 está à esquerda do principal)."""
     try:
         with mss.mss() as sct:
             monitores = []
@@ -57,7 +113,6 @@ def listar_monitores():
                 return monitores
     except Exception:
         pass
-    # Fallback: apenas o monitor principal
     user32 = ctypes.windll.user32
     return [{
         "index": 1,
@@ -66,7 +121,6 @@ def listar_monitores():
         "width": user32.GetSystemMetrics(0),
         "height": user32.GetSystemMetrics(1),
     }]
-
 
 def detectar_ativo_tradingview():
     if not HAS_WIN32:
@@ -105,9 +159,6 @@ class FullscreenCalibrator:
         self.monitor = monitor
         self.top = tk.Toplevel()
         w, h = monitor["width"], monitor["height"]
-        # Posiciona o overlay EXATAMENTE sobre o monitor escolhido.
-        # (O '-fullscreen' do tkinter cobre só o monitor principal,
-        #  por isso usamos geometry com as coordenadas globais.)
         self.top.overrideredirect(True)
         self.top.geometry(f"{w}x{h}{monitor['left']:+d}{monitor['top']:+d}")
         self.top.attributes('-alpha', 0.28)
@@ -117,7 +168,6 @@ class FullscreenCalibrator:
 
         self.canvas = tk.Canvas(self.top, cursor="cross", bg="#0284c7")
         self.canvas.pack(fill="both", expand=True)
-        # Dica fixa no canto do monitor sendo calibrado
         self.canvas.create_text(
             12, 12, anchor="nw",
             text=f"MONITOR {monitor['index']} • Arraste sobre a célula de status • ESC cancela",
@@ -131,17 +181,11 @@ class FullscreenCalibrator:
         self.rect = None
 
     def on_press(self, e):
-        # Globais (para salvar no roi_config) + relativas (para desenhar)
         self.start_x = e.x_root
         self.start_y = e.y_root
         rx, ry = e.x_root - self.monitor["left"], e.y_root - self.monitor["top"]
         self.rel_x, self.rel_y = rx, ry
         self.rect = self.canvas.create_rectangle(rx, ry, rx + 1, ry + 1, outline='#f43f5e', width=3)
-
-    @property
-    def x(self): return self.start_x
-    @property
-    def y(self): return self.start_y
 
     def on_drag(self, e):
         rx = e.x_root - self.monitor["left"]
@@ -169,7 +213,7 @@ class SentinelApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Lumi Sentinel • Prop Desk Monitor")
-        self.root.geometry("460x620")
+        self.root.geometry("460x650")
         self.root.configure(bg="#070b14")
         self.root.attributes('-topmost', True)
 
@@ -182,7 +226,7 @@ class SentinelApp:
 
         header = tk.Frame(root, bg="#0d1527", pady=12, padx=16)
         header.pack(fill="x")
-        tk.Label(header, text="⚡ LUMI SENTINEL", font=("Segoe UI", 12, "bold"), fg="#38bdf8", bg="#0d1527").pack(side="left")
+        tk.Label(header, text="⚡ LUMI SENTINEL + APEX BRIDGE", font=("Segoe UI", 11, "bold"), fg="#38bdf8", bg="#0d1527").pack(side="left")
         self.lbl_status = tk.Label(header, text="🔴 PARADO", font=("Segoe UI", 9, "bold"), fg="#f87171", bg="#0d1527")
         self.lbl_status.pack(side="right")
 
@@ -192,15 +236,15 @@ class SentinelApp:
         self.lbl_dimensoes = tk.Label(main, text="IMAGEM DA LEITURA (TAMANHO REAL):", font=("Segoe UI", 8, "bold"), fg="#94a3b8", bg="#070b14")
         self.lbl_dimensoes.pack(anchor="w")
 
-        self.box_img = tk.Frame(main, bg="#020617", bd=2, relief="groove", height=110)
-        self.box_img.pack(fill="x", pady=(5, 12))
+        self.box_img = tk.Frame(main, bg="#020617", bd=2, relief="groove", height=100)
+        self.box_img.pack(fill="x", pady=(5, 10))
         self.box_img.pack_propagate(False)
 
         self.lbl_img = tk.Label(self.box_img, bg="#020617", text="Selecione a célula de Status (CALIBRAR)", fg="#64748b", font=("Segoe UI", 9))
         self.lbl_img.pack(fill="both", expand=True)
 
         info = tk.Frame(main, bg="#0d1527", padx=14, pady=10)
-        info.pack(fill="x", pady=(0, 15))
+        info.pack(fill="x", pady=(0, 12))
 
         ativo_frame = tk.Frame(info, bg="#0d1527")
         ativo_frame.pack(fill="x")
@@ -217,10 +261,14 @@ class SentinelApp:
         self.lbl_gatilho = tk.Label(info, text="Último Sinal: Nenhum", font=("Segoe UI", 9), fg="#94a3b8", bg="#0d1527")
         self.lbl_gatilho.pack(anchor="w", pady=(2, 0))
 
-        self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR CÉLULA DE STATUS", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=10, command=self.calibrar, cursor="hand2")
+        # Indicador da Ponte Tradovate
+        self.lbl_bridge = tk.Label(info, text=f"Ponte Apex: 127.0.0.1:{os.getenv('BRIDGE_PORT', 8765)} (PRONTA)", font=("Segoe UI", 8, "bold"), fg="#38bdf8", bg="#0d1527")
+        self.lbl_bridge.pack(anchor="w", pady=(4, 0))
+
+        self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR CÉLULA DE STATUS", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=9, command=self.calibrar, cursor="hand2")
         self.btn_calib.pack(fill="x", pady=(0, 8))
 
-        self.btn_run = tk.Button(main, text="▶️ 2. INICIAR SENTINELA", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", pady=10, command=self.toggle_run, cursor="hand2")
+        self.btn_run = tk.Button(main, text="▶️ 2. INICIAR SENTINELA", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", pady=9, command=self.toggle_run, cursor="hand2")
         self.btn_run.pack(fill="x")
 
         self.root.after(300, self.atualizar_preview_loop)
@@ -253,37 +301,21 @@ class SentinelApp:
         dlg.configure(bg="#0d1527")
         dlg.attributes('-topmost', True)
         dlg.resizable(False, False)
-        # Centraliza o diálogo no monitor principal
         dlg.geometry("+%d+%d" % (
             self.root.winfo_screenwidth() // 2 - 190,
             self.root.winfo_screenheight() // 2 - 110))
 
-        tk.Label(dlg, text="Em qual monitor está o TradingView?",
-                 font=("Segoe UI", 10, "bold"), fg="#e2e8f0", bg="#0d1527"
-                 ).pack(padx=20, pady=(16, 10))
+        tk.Label(dlg, text="Em qual monitor está o TradingView?", font=("Segoe UI", 10, "bold"), fg="#e2e8f0", bg="#0d1527").pack(padx=20, pady=(16, 10))
 
         var = tk.IntVar(value=monitores[0]["index"])
         for m in monitores:
-            texto = (f"Monitor {m['index']} — {m['width']}x{m['height']} "
-                     f"(x={m['left']}, y={m['top']})")
-            tk.Radiobutton(dlg, text=texto, variable=var, value=m["index"],
-                           font=("Segoe UI", 9), fg="#e2e8f0", bg="#0d1527",
-                           selectcolor="#1e293b", activebackground="#0d1527",
-                           activeforeground="#38bdf8", anchor="w"
-                           ).pack(fill="x", padx=20, pady=2)
+            texto = f"Monitor {m['index']} — {m['width']}x{m['height']} (x={m['left']}, y={m['top']})"
+            tk.Radiobutton(dlg, text=texto, variable=var, value=m["index"], font=("Segoe UI", 9), fg="#e2e8f0", bg="#0d1527", selectcolor="#1e293b", activebackground="#0d1527", activeforeground="#38bdf8", anchor="w").pack(fill="x", padx=20, pady=2)
 
         btns = tk.Frame(dlg, bg="#0d1527")
         btns.pack(fill="x", padx=20, pady=14)
-        tk.Button(btns, text="Cancelar", font=("Segoe UI", 9),
-                  bg="#1e293b", fg="#94a3b8", relief="flat", padx=12, pady=6,
-                  command=dlg.destroy).pack(side="left")
-        tk.Button(btns, text="Calibrar este monitor ➜", font=("Segoe UI", 9, "bold"),
-                  bg="#0284c7", fg="#ffffff", relief="flat", padx=12, pady=6,
-                  command=lambda: (dlg.destroy(),
-                                   self.abrir_overlay(
-                                       next(m for m in monitores
-                                            if m["index"] == var.get())))
-                  ).pack(side="right")
+        tk.Button(btns, text="Cancelar", font=("Segoe UI", 9), bg="#1e293b", fg="#94a3b8", relief="flat", padx=12, pady=6, command=dlg.destroy).pack(side="left")
+        tk.Button(btns, text="Calibrar este monitor ➜", font=("Segoe UI", 9, "bold"), bg="#0284c7", fg="#ffffff", relief="flat", padx=12, pady=6, command=lambda: (dlg.destroy(), self.abrir_overlay(next(m for m in monitores if m["index"] == var.get())))).pack(side="right")
 
     def abrir_overlay(self, monitor):
         self.root.withdraw()
@@ -381,12 +413,11 @@ class SentinelApp:
                 estado_atual = self.classificar_estado(frame_bgr)
                 self.lbl_estado.config(text=f"Estado: {estado_atual}")
 
-                # Heartbeat + Envio da imagem ao vivo em Base64 a cada 1.5s
+                # Heartbeat + Envio da imagem ao vivo a cada 1.5s
                 agora = time.time()
                 if agora - last_hb >= 1.5:
                     last_hb = agora
                     try:
-                        # Comprime em JPEG leve com 65% de qualidade (~800 bytes)
                         _, buf = cv2.imencode('.jpg', frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 65])
                         b64_img = f"data:image/jpeg;base64,{base64.b64encode(buf).decode('utf-8')}"
 
@@ -421,6 +452,10 @@ class SentinelApp:
                 time.sleep(1)
 
 if __name__ == "__main__":
+    # Inicia a Ponte HTTP Tradovate em segundo plano
+    threading.Thread(target=iniciar_servidor_bridge, daemon=True).start()
+
+    # Inicia a Interface Gráfica da Sentinela
     root = tk.Tk()
     app = SentinelApp(root)
     root.mainloop()

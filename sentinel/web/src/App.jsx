@@ -4,22 +4,24 @@ import {
   Volume2, VolumeX, ShieldAlert, ArrowUpRight, ArrowDownRight, 
   Zap, CheckCircle2, Eye, Activity, Trash2, Clock, Play, 
   Calendar, Award, BookOpen, Sparkles, Upload, Key,
-  TrendingUp, AlertOctagon, CheckSquare, RefreshCw, Plus, X, Globe, ListChecks
+  TrendingUp, AlertOctagon, CheckSquare, RefreshCw, Plus, X, Globe, ListChecks,
+  Radio, Layers, Send
 } from 'lucide-react';
 
 const SUPABASE_URL = "https://wvyllpbqtahxrqsjjzgp.supabase.co";
 const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind2eWxscGJxdGFoeHJxc2pqemdwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyMzU3NzEsImV4cCI6MjEwNjgxMTc3MX0.7qIsu2oZermD9uPA8ggSfNZuKDZH-_ifs2jJjeTX6XM";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
 
-// Cadeia de modelos de visão com fallback automático (a Groq descontinua
-// modelos com frequência — o app tenta nesta ordem e usa o 1º que responder)
+// Endereço da ponte local python (sentinel.py)
+const BRIDGE_URL = "http://127.0.0.1:8765";
+
+// Cadeia de modelos de visão com fallback automático (Groq)
 const GROQ_VISION_CANDIDATES = [
   "meta-llama/llama-4-scout-17b-16e-instruct",
   "meta-llama/llama-4-maverick-17b-128e-instruct",
   "qwen/qwen3.8-27b",
 ];
 
-// Extrai a mensagem real de erro da API Groq
 const readGroqError = async (res) => {
   try {
     const data = await res.json();
@@ -36,7 +38,7 @@ export default function App() {
   // Sentinela e Sinais
   const [signals, setSignals] = useState([]);
   const [activeSignal, setActiveSignal] = useState(null);
-  const lastSignalIdRef = useRef(0); // maior id de sinal já visto (base do polling fallback)
+  const lastSignalIdRef = useRef(0);
   const [selectedSignals, setSelectedSignals] = useState([]);
   const [showDeleteSignalsModal, setShowDeleteSignalsModal] = useState(false);
   const [isDeletingSignals, setIsDeletingSignals] = useState(false);
@@ -53,7 +55,17 @@ export default function App() {
   const [news, setNews] = useState([]);
   const [activeNewsAlert, setActiveNewsAlert] = useState(null);
 
-  // Groq Vision & Scanner (Compatível com prop-copilot: lê tanto 'lumi_groq_key' quanto 'ai_key')
+  // PONTE LOCAL TRADOVATE / APEX
+  const [bridgeStatus, setBridgeStatus] = useState('checking'); // 'online', 'offline', 'checking'
+  const [bridgeAccounts, setBridgeAccounts] = useState([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState([]);
+  const [slPreset, setSlPreset] = useState(15.0); // 10, 15, 20 ou 'custom'
+  const [customSlPoints, setCustomSlPoints] = useState(15.0);
+  const [contractsQty, setContractsQty] = useState(1);
+  const [isExecutingOrder, setIsExecutingOrder] = useState(false);
+  const [executionReport, setExecutionReport] = useState(null);
+
+  // Groq Vision & Scanner
   const [groqKey, setGroqKey] = useState(
     localStorage.getItem('lumi_groq_key') || localStorage.getItem('ai_key') || ''
   );
@@ -65,75 +77,6 @@ export default function App() {
   );
   const [groqError, setGroqError] = useState(null);
   const [activeVisionModel, setActiveVisionModel] = useState(GROQ_VISION_CANDIDATES[0]);
-
-  // Validação dinâmica idêntica ao prop-copilot-frontend:
-  // Consulta /models para autenticar a chave e já descobre o modelo de visão disponível
-  const validateGroqKey = async (key) => {
-    const k = (key || '').trim();
-    if (!k) { 
-      setGroqStatus('missing'); 
-      setGroqError(null); 
-      return { ok: false, error: null }; 
-    }
-    setGroqStatus('checking');
-    setGroqError(null);
-    try {
-      const resModels = await fetch('https://api.groq.com/openai/v1/models', {
-        headers: { 'Authorization': `Bearer ${k}` }
-      });
-      if (!resModels.ok) {
-        const error = { step: 'Autenticação (/models)', status: resModels.status, message: await readGroqError(resModels) };
-        setGroqStatus('error');
-        setGroqError(error);
-        return { ok: false, error };
-      }
-      
-      const modelsData = await resModels.json();
-      const ids = modelsData?.data?.map(m => m.id) || [];
-      // Testa a cadeia em ordem (prioriza candidatos anunciados em /models).
-      // O 1º que responder vira o modelo ativo — acabou o "travou no modelo morto".
-      const ordered = [
-        ...GROQ_VISION_CANDIDATES.filter(c => ids.includes(c)),
-        ...GROQ_VISION_CANDIDATES.filter(c => !ids.includes(c))
-      ];
-      let working = null;
-      let lastErr = null;
-      for (const candidate of ordered) {
-        try {
-          const ping = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${k}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: candidate, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
-          });
-          if (ping.ok) { working = candidate; break; }
-          lastErr = { step: `Modelo ${candidate}`, status: ping.status, message: await readGroqError(ping) };
-        } catch (ePing) {
-          lastErr = { step: `Modelo ${candidate}`, status: 0, message: ePing.message };
-        }
-      }
-      if (!working) {
-        const error = lastErr || { step: 'Modelos de visão', status: 0, message: 'Nenhum modelo de visão respondeu.' };
-        setGroqStatus('error');
-        setGroqError(error);
-        return { ok: false, error };
-      }
-      setActiveVisionModel(working);
-
-      setGroqStatus('ok');
-      setGroqError(null);
-      return { ok: true, error: null };
-    } catch (e) {
-      const error = { step: 'Rede', status: 0, message: `Sem resposta da API Groq (${e.message}). Verifique conexão.` };
-      setGroqStatus('error');
-      setGroqError(error);
-      return { ok: false, error };
-    }
-  };
-
-  useEffect(() => {
-    if (groqKey) validateGroqKey(groqKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Contas de Mesa e Diário
   const [accounts, setAccounts] = useState([]);
@@ -165,7 +108,8 @@ export default function App() {
       { id: 2, text: 'Confirmar Janela Operacional (08:15-11:00 ou 18:15-20:45 Dublin)', done: false },
       { id: 3, text: 'Limpar a Mente: Risco travado em $100 por trade (1R)', done: false },
       { id: 4, text: 'Calibrar Sentinela na célula de Status do TradingView', done: false },
-      { id: 5, text: 'Respeitar Stop Loss no gráfico. Jamais mover stop!', done: false }
+      { id: 5, text: 'Ponte Tradovate online e contas Apex marcadas', done: false },
+      { id: 6, text: 'Respeitar Stop Loss no gráfico. Jamais mover stop!', done: false }
     ];
   });
 
@@ -246,6 +190,193 @@ export default function App() {
     alarmIntervalRef.current = setInterval(() => triggerAudioPulse(type), 600);
     alarmTimeoutRef.current = setTimeout(() => stopAlarm(), 30000);
   };
+
+  // Monitoramento da Ponte Local Tradovate (127.0.0.1:8765)
+  useEffect(() => {
+    const checkBridge = async () => {
+      try {
+        const res = await fetch(`${BRIDGE_URL}/bridge/status`, { method: 'GET', signal: AbortSignal.timeout(2500) });
+        if (res.ok) {
+          setBridgeStatus('online');
+          if (bridgeAccounts.length === 0) {
+            const accRes = await fetch(`${BRIDGE_URL}/bridge/accounts`, { signal: AbortSignal.timeout(4000) });
+            const accData = await accRes.json();
+            if (accData.ok && accData.accounts) {
+              setBridgeAccounts(accData.accounts);
+              setSelectedAccountIds(accData.accounts.map(a => String(a.id)));
+            }
+          }
+        } else {
+          setBridgeStatus('offline');
+        }
+      } catch {
+        setBridgeStatus('offline');
+      }
+    };
+
+    checkBridge();
+    const interval = setInterval(checkBridge, 5000);
+    return () => clearInterval(interval);
+  }, [bridgeAccounts.length]);
+
+  // Execução de Ordem na Tradovate com Bracket
+  const handleExecuteOrder = async (direction) => {
+    if (selectedAccountIds.length === 0) {
+      setFeedback({
+        title: "Nenhuma conta selecionada",
+        message: "Por favor, marque ao menos uma conta Apex para enviar a operação.",
+        tone: "error"
+      });
+      return;
+    }
+
+    const effectiveSl = slPreset === 'custom' ? Number(customSlPoints) : Number(slPreset);
+    if (isNaN(effectiveSl) || effectiveSl <= 0) {
+      setFeedback({
+        title: "Stop Loss inválido",
+        message: "Informe uma pontuação de Stop Loss válida maior que zero.",
+        tone: "error"
+      });
+      return;
+    }
+
+    setIsExecutingOrder(true);
+    try {
+      const payload = {
+        account_ids: selectedAccountIds,
+        symbol: sentinel.monitored_symbol || 'MNQ',
+        direction: direction,
+        qty: Number(contractsQty),
+        sl_points: effectiveSl,
+        tp_points: effectiveSl * 2.0
+      };
+
+      const res = await fetch(`${BRIDGE_URL}/bridge/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      setIsExecutingOrder(false);
+
+      if (data.ok) {
+        setExecutionReport({
+          direction,
+          symbol: payload.symbol,
+          sl_points: effectiveSl,
+          qty: payload.qty,
+          results: data.results
+        });
+
+        // Grava no diário de trades automaticamente como registro
+        supabase.from('trade_logs_cop').insert({
+          symbol: payload.symbol,
+          direction: direction,
+          setup_name: `Execução Apex Bridge (${effectiveSl} pts SL)`,
+          result_r: 0,
+          result_usd: 0,
+          rule_respected: true,
+          notes: `Disparado em ${selectedAccountIds.length} conta(s). Lote: ${payload.qty}.`
+        }).then();
+
+        stopAlarm();
+        setActiveSignal(null);
+      } else {
+        setFeedback({
+          title: "Falha na Execução Tradovate",
+          message: data.error || "O servidor local da Tradovate rejeitou a ordem.",
+          tone: "error"
+        });
+      }
+    } catch (err) {
+      setIsExecutingOrder(false);
+      setFeedback({
+        title: "Ponte Python Offline",
+        message: "Não foi possível conectar com o script sentinel.py (127.0.0.1:8765). Certifique-se de que ele está aberto no seu PC.",
+        tone: "error"
+      });
+    }
+  };
+
+  const toggleSelectAllAccounts = () => {
+    if (selectedAccountIds.length === bridgeAccounts.length) {
+      setSelectedAccountIds([]);
+    } else {
+      setSelectedAccountIds(bridgeAccounts.map(a => String(a.id)));
+    }
+  };
+
+  const toggleAccount = (id) => {
+    const sId = String(id);
+    setSelectedAccountIds(prev =>
+      prev.includes(sId) ? prev.filter(x => x !== sId) : [...prev, sId]
+    );
+  };
+
+  // Validação dinâmica da chave Groq
+  const validateGroqKey = async (key) => {
+    const k = (key || '').trim();
+    if (!k) { 
+      setGroqStatus('missing'); 
+      setGroqError(null); 
+      return { ok: false, error: null }; 
+    }
+    setGroqStatus('checking');
+    setGroqError(null);
+    try {
+      const resModels = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: { 'Authorization': `Bearer ${k}` }
+      });
+      if (!resModels.ok) {
+        const error = { step: 'Autenticação (/models)', status: resModels.status, message: await readGroqError(resModels) };
+        setGroqStatus('error');
+        setGroqError(error);
+        return { ok: false, error };
+      }
+      
+      const modelsData = await resModels.json();
+      const ids = modelsData?.data?.map(m => m.id) || [];
+      const ordered = [
+        ...GROQ_VISION_CANDIDATES.filter(c => ids.includes(c)),
+        ...GROQ_VISION_CANDIDATES.filter(c => !ids.includes(c))
+      ];
+      let working = null;
+      let lastErr = null;
+      for (const candidate of ordered) {
+        try {
+          const ping = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${k}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: candidate, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+          });
+          if (ping.ok) { working = candidate; break; }
+          lastErr = { step: `Modelo ${candidate}`, status: ping.status, message: await readGroqError(ping) };
+        } catch (ePing) {
+          lastErr = { step: `Modelo ${candidate}`, status: 0, message: ePing.message };
+        }
+      }
+      if (!working) {
+        const error = lastErr || { step: 'Modelos de visão', status: 0, message: 'Nenhum modelo de visão respondeu.' };
+        setGroqStatus('error');
+        setGroqError(error);
+        return { ok: false, error };
+      }
+      setActiveVisionModel(working);
+      setGroqStatus('ok');
+      setGroqError(null);
+      return { ok: true, error: null };
+    } catch (e) {
+      const error = { step: 'Rede', status: 0, message: `Sem resposta da API Groq (${e.message}). Verifique conexão.` };
+      setGroqStatus('error');
+      setGroqError(error);
+      return { ok: false, error };
+    }
+  };
+
+  useEffect(() => {
+    if (groqKey) validateGroqKey(groqKey);
+  }, []);
 
   // Relógios
   useEffect(() => {
@@ -337,8 +468,7 @@ export default function App() {
     };
   }, [soundEnabled]);
 
-  // Fallback anti-falha: polling a cada 5s detecta sinais novos mesmo se o
-  // realtime (websocket) estiver bloqueado — dispara o mesmo alerta + som
+  // Fallback Polling 5s
   useEffect(() => {
     const poll = async () => {
       try {
@@ -351,13 +481,13 @@ export default function App() {
           setActiveSignal(latest);
           if (soundEnabled) startAlarm30s(latest.direction);
         }
-      } catch (e) { /* polling silencioso */ }
+      } catch (e) {}
     };
     const t = setInterval(poll, 5000);
     return () => clearInterval(t);
   }, [soundEnabled]);
 
-  // Scanner de Otimização via Groq Vision
+  // Scanner Groq Vision
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -376,8 +506,6 @@ export default function App() {
 
     setIsScanning(true);
     try {
-      // 1. Resolve o modelo de visão funcionando (ativo 1º, depois a cadeia).
-      // Se a Groq matou o modelo no meio do caminho, o próximo assume sozinho.
       const tryModels = [activeVisionModel, ...GROQ_VISION_CANDIDATES.filter(c => c !== activeVisionModel)];
       let visionModel = tryModels[0];
       for (const candidate of tryModels) {
@@ -389,12 +517,10 @@ export default function App() {
           });
           if (ping.ok) { visionModel = candidate; break; }
           const pmsg = (await readGroqError(ping)).toLowerCase();
-          const gone = ping.status === 404 || ping.status === 410
-            || pmsg.includes('decommission') || pmsg.includes('not found')
-            || pmsg.includes('does not exist') || pmsg.includes('model_not_found');
-          if (!gone) { visionModel = candidate; break; } // erro de cota/auth: trocar de modelo não resolve
+          const gone = ping.status === 404 || ping.status === 410 || pmsg.includes('decommission') || pmsg.includes('not found');
+          if (!gone) { visionModel = candidate; break; }
         } catch (errCheck) {
-          break; // sem rede: mantém o ativo e o erro aparece no envio real
+          break;
         }
       }
       if (visionModel !== activeVisionModel) setActiveVisionModel(visionModel);
@@ -506,7 +632,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     }
   };
 
-  // Alternar Checklist
+  // Checklist
   const toggleChecklist = (id) => {
     const updated = checklist.map(c => c.id === id ? { ...c, done: !c.done } : c);
     setChecklist(updated);
@@ -519,7 +645,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     localStorage.setItem('lumi_checklist', JSON.stringify(reset));
   };
 
-  // Gerenciador de Sinais
+  // Sinais
   const toggleSignal = (id) => {
     setSelectedSignals(prev =>
       prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
@@ -530,11 +656,6 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
     setSelectedSignals(prev =>
       prev.length === signals.length ? [] : signals.map(s => s.id)
     );
-  };
-
-  const deleteSelectedSignals = () => {
-    if (selectedSignals.length === 0) return;
-    setShowDeleteSignalsModal(true);
   };
 
   const confirmDeleteSelectedSignals = async () => {
@@ -561,32 +682,26 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
   return (
     <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans antialiased overflow-x-clip">
       
-      {/* HEADER DE COMANDO INSTITUCIONAL */}
+      {/* HEADER DE COMANDO */}
       <header className="w-full bg-[#0b1222] border-b border-slate-800 px-3 py-2.5 sm:px-6 sm:py-3 flex flex-col md:flex-row justify-between items-center gap-2 sm:gap-3 sticky top-0 z-40 shadow-xl">
         <div className="flex items-center flex-wrap gap-2 sm:gap-3 w-full md:w-auto justify-between md:justify-start min-w-0">
           
-          {/* LOGO OFICIAL LUMI COPILOT */}
           <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0">
             <div className="relative group shrink-0">
               <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl blur opacity-40 group-hover:opacity-75 transition duration-300"></div>
               <div className="relative p-1 bg-[#070d1a] border border-cyan-500/30 rounded-xl flex items-center justify-center shadow-lg">
-                <img 
-                  src="/images/logo_cop_sem_fundo.png" 
-                  alt="Lumi Copilot" 
-                  className="w-7 h-7 sm:w-8 sm:h-8 object-contain"
-                />
+                <img src="/images/logo_cop_sem_fundo.png" alt="Lumi Copilot" className="w-7 h-7 sm:w-8 sm:h-8 object-contain" />
               </div>
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <h1 className="text-xs sm:text-base font-black tracking-wider text-white whitespace-nowrap">LUMI COPILOT</h1>
-                <span className="text-[8px] sm:text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">PRO DESK</span>
+                <span className="text-[8px] sm:text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">APEX PRO DESK</span>
               </div>
               <p className="text-[9px] sm:text-[10px] text-slate-400 font-mono truncate">NASDAQ Scalp • Dublin Hub</p>
             </div>
           </div>
 
-          {/* RELÓGIOS DE FUSO */}
           <div className="flex items-center gap-1 sm:gap-2 font-mono text-[9px] sm:text-[11px] bg-[#070d1a] border border-slate-800 px-2 sm:px-3 py-1.5 rounded-xl shrink-0">
             <div className="flex items-center gap-1 sm:gap-1.5 text-slate-300">
               <Globe size={12} className="text-cyan-400" />
@@ -601,57 +716,43 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
           </div>
         </div>
 
-        {/* NAVEGAÇÃO E AÇÕES — abas rolam, botões de ação sempre visíveis */}
+        {/* NAVEGAÇÃO E AÇÕES */}
         <div className="flex items-center gap-2 w-full md:w-auto min-w-0">
           <div className="flex bg-[#070d1a] p-1 rounded-xl border border-slate-800 overflow-x-auto flex-1 md:flex-none min-w-0">
-            <button 
-              onClick={() => setActiveTab('cockpit')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'cockpit' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('cockpit')} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'cockpit' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <Activity size={13} /> Cockpit
             </button>
-            <button 
-              onClick={() => setActiveTab('scanner')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'scanner' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('scanner')} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'scanner' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <Sparkles size={13} /> Scanner IA
             </button>
-            <button 
-              onClick={() => setActiveTab('accounts')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'accounts' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('accounts')} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'accounts' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <Award size={13} /> Mesas
             </button>
-            <button 
-              onClick={() => setActiveTab('journal')}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'journal' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
+            <button onClick={() => setActiveTab('journal')} className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 ${activeTab === 'journal' ? 'bg-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
               <BookOpen size={13} /> Diário
             </button>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
-              soundEnabled ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'
-            }`}
-            title={soundEnabled ? "Sirene Armada" : "Sirene Desarmada"}>
-            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-          </button>
+            <button
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className={`p-2 rounded-xl text-xs font-bold transition-all border shrink-0 ${
+                soundEnabled ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title={soundEnabled ? "Sirene Armada" : "Sirene Desarmada"}>
+              {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            </button>
 
-          <button
-            onClick={() => setShowKeyModal(true)}
-            className={`p-2 rounded-xl transition-all border shrink-0 ${
-              groqStatus === 'ok' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-              : groqStatus === 'error' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-              : groqStatus === 'checking' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
-              : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-            }`}
-            title={
-              groqStatus === 'ok' ? `Groq conectado — modelo: ${activeVisionModel}`
-              : groqStatus === 'error' ? 'Falha na chave Groq — clique para corrigir'
-              : groqStatus === 'checking' ? 'Validando chave Groq...'
-              : 'Sem chave Groq — clique para configurar'
-            }>
-            <Key size={16} />
-          </button>
+            <button
+              onClick={() => setShowKeyModal(true)}
+              className={`p-2 rounded-xl transition-all border shrink-0 ${
+                groqStatus === 'ok' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                : groqStatus === 'error' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                : groqStatus === 'checking' ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 animate-pulse'
+                : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+              }`}>
+              <Key size={16} />
+            </button>
           </div>
         </div>
       </header>
@@ -679,15 +780,23 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               <h3 className="text-base font-bold text-white truncate">{activeSignal.direction} em {activeSignal.symbol}</h3>
             </div>
           </div>
-          <button
-            onClick={() => { stopAlarm(); setActiveSignal(null); }}
-            className="px-4 py-2 bg-white text-slate-950 font-bold text-xs rounded-xl hover:bg-slate-200 transition-all flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0">
-            <CheckCircle2 size={15} className="text-emerald-600" /> CIENTE (PARAR SOM)
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => handleExecuteOrder(activeSignal.direction)} 
+              disabled={isExecutingOrder || selectedAccountIds.length === 0}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs rounded-xl shadow-lg flex items-center gap-1.5 transition-all disabled:opacity-50">
+              <Zap size={15} /> EXECUTAR AGORA ({selectedAccountIds.length} CONTAS)
+            </button>
+            <button
+              onClick={() => { stopAlarm(); setActiveSignal(null); }}
+              className="px-3 py-2 bg-slate-800 text-slate-300 font-bold text-xs rounded-xl hover:bg-slate-700 transition-all">
+              IGNORAR
+            </button>
+          </div>
         </div>
       )}
 
-      {/* CORPO PRINCIPAL - COCKPIT FULLSCREEN */}
+      {/* CORPO PRINCIPAL */}
       <div className="flex-1 p-3 sm:p-5 max-w-[1700px] w-full mx-auto">
 
         {/* ================= ABA 1: COCKPIT OPERACIONAL ================= */}
@@ -719,236 +828,405 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
             )}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            
-            {/* Layout plano: cada card abaixo é item direto do grid (lg:order define a posição no desktop) */}
-              
-              {/* Card Sentinela Local com Feed Ao Vivo */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-4 lg:order-1">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-xs font-bold text-slate-400 uppercase font-mono tracking-wider flex items-center gap-1.5">
-                    <Eye size={14} className="text-cyan-400" /> Sentinela OpenCV
-                  </span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono flex items-center gap-1.5 ${
-                    sentinel.is_online ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400'
-                  }`}>
-                    {sentinel.is_online && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
-                    {sentinel.is_online ? 'ONLINE' : 'DESCONECTADA'}
-                  </span>
+          {/* PAINEL TÁTICO DE EXECUÇÃO APEX / TRADOVATE */}
+          <div className="bg-gradient-to-r from-[#0b1222] via-[#081226] to-[#0b1222] border-2 border-cyan-500/40 p-4 sm:p-5 rounded-2xl shadow-2xl mb-4">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-cyan-500/20 text-cyan-400 rounded-xl border border-cyan-500/30">
+                  <Radio size={18} className={bridgeStatus === 'online' ? 'animate-pulse' : ''} />
                 </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs font-mono mb-3">
-                  <div className="bg-[#070d1a] p-2.5 rounded-xl border border-slate-800/80">
-                    <span className="text-[10px] text-slate-500 block">Ativo em Foco</span>
-                    <strong className="text-purple-300 text-sm">{sentinel.monitored_symbol || 'MNQ'}</strong>
-                  </div>
-                  <div className="bg-[#070d1a] p-2.5 rounded-xl border border-slate-800/80">
-                    <span className="text-[10px] text-slate-500 block">Estado Tela</span>
-                    <strong className="text-white text-sm">{sentinel.current_state}</strong>
-                  </div>
-                </div>
-
-                {/* FEED VISUAL EM TEMPO REAL */}
-                <div className="bg-[#040812] border border-slate-800/90 rounded-xl p-2.5 flex flex-col items-center">
-                  <div className="w-full flex justify-between items-center mb-1.5 text-[9px] font-mono text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <span className={`w-1.5 h-1.5 rounded-full ${sentinel.is_online ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
-                      FEED VISUAL (ROI)
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm sm:text-base font-black tracking-wider text-white uppercase font-mono">
+                      Módulo de Execução Tática • Apex Tradovate
+                    </h2>
+                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-mono font-bold border ${
+                      bridgeStatus === 'online' 
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' 
+                        : 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                    }`}>
+                      {bridgeStatus === 'online' ? '🟢 PONTE LOCAL ONLINE (127.0.0.1:8765)' : '🔴 SENTINEL OFFLINE'}
                     </span>
-                    <span>1.5s refresh</span>
                   </div>
-
-                  {sentinel.preview_base64 && sentinel.is_online ? (
-                    <img 
-                      src={sentinel.preview_base64} 
-                      alt="O que a sentinela vê" 
-                      className="max-h-12 w-auto object-contain rounded border border-slate-700/60 shadow-inner"
-                    />
-                  ) : (
-                    <div className="py-2.5 text-center text-[10px] text-slate-600 font-mono">
-                      {sentinel.is_online ? 'Aguardando primeiro frame...' : 'Inicie a Sentinela no PC para ver a tela'}
-                    </div>
-                  )}
+                  <p className="text-[10px] text-slate-400 font-mono">Disparo direto com Bracket OCO automático e proteção de Stop Loss</p>
                 </div>
               </div>
 
-              {/* Oportunidades do Dia (Sinais da Sentinela) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-4 lg:order-4">
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
-                    <Zap size={14} className="text-emerald-400" /> Oportunidades do Dia
-                    <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-mono">
-                      {signals.length}
-                    </span>
-                  </h3>
-                  {signals.length > 0 && (
-                    <button onClick={toggleAllSignals} className="text-[10px] text-cyan-400 hover:underline font-mono">
-                      {selectedSignals.length === signals.length ? 'Desmarcar todos' : 'Marcar todos'}
-                    </button>
-                  )}
-                </div>
+              {bridgeAccounts.length > 0 && (
+                <button onClick={toggleSelectAllAccounts} className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 font-bold bg-[#070d1a] px-3 py-1.5 rounded-xl border border-slate-800">
+                  {selectedAccountIds.length === bridgeAccounts.length ? 'Desmarcar Todas' : `Selecionar Todas (${bridgeAccounts.length})`}
+                </button>
+              )}
+            </div>
 
-                {signals.length === 0 ? (
-                  <div className="py-5 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
-                    Nenhuma oportunidade captada hoje.<br />Inicie a <strong>Sentinela</strong> para detectar gatilhos BUY/SELL.
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                      {signals.map(sig => (
-                        <label key={sig.id} className={`p-2.5 bg-[#070d1a] border rounded-xl flex items-center gap-2.5 cursor-pointer transition-all font-mono text-xs ${selectedSignals.includes(sig.id) ? 'border-cyan-500/60' : 'border-slate-800'}`}>
-                          <input
-                            type="checkbox"
-                            checked={selectedSignals.includes(sig.id)}
-                            onChange={() => toggleSignal(sig.id)}
-                            className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0 shrink-0"
-                          />
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${sig.direction === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                            {sig.direction}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex justify-between items-center gap-2">
-                              <strong className="text-white truncate">{sig.symbol}</strong>
-                              <span className="text-slate-500 text-[10px] shrink-0">
-                                {sig.created_at ? new Date(sig.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                              </span>
-                            </div>
-                            {sig.info && <p className="text-[10px] text-slate-400 truncate">{sig.info}</p>}
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                    {selectedSignals.length > 0 && (
+            {/* SELEÇÃO DAS CONTAS APEX (CHECKBOXES) */}
+            <div className="my-3.5">
+              <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-2">
+                1. Contas Apex Alvo ({selectedAccountIds.length} ativas para o próximo trade):
+              </span>
+              
+              {bridgeAccounts.length === 0 ? (
+                <div className="p-3 bg-[#070d1a] border border-dashed border-slate-800 rounded-xl text-center text-xs text-slate-500 font-mono">
+                  {bridgeStatus === 'online' ? 'Buscando contas no Tradovate...' : 'Inicie o arquivo sentinel.py no seu computador para carregar suas contas da Apex automaticamente.'}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {bridgeAccounts.map(acc => {
+                    const isChecked = selectedAccountIds.includes(String(acc.id));
+                    return (
                       <button
-                        onClick={deleteSelectedSignals}
-                        className="mt-3 w-full py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5">
-                        <Trash2 size={14} /> Apagar ({selectedSignals.length}) selecionada(s)
+                        key={acc.id}
+                        type="button"
+                        onClick={() => toggleAccount(acc.id)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-mono transition-all ${
+                          isChecked 
+                            ? 'bg-cyan-950/60 border-cyan-400 text-cyan-200 shadow-md' 
+                            : 'bg-[#070d1a] border-slate-800 text-slate-500 hover:border-slate-700'
+                        }`}>
+                        <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${isChecked ? 'bg-cyan-500 border-cyan-400 text-slate-950' : 'border-slate-700'}`}>
+                          {isChecked && <CheckSquare size={12} className="stroke-[3]" />}
+                        </div>
+                        <span className="font-bold">{acc.name || `CONTA-${acc.id}`}</span>
                       </button>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Janelas Oficiais (Dublin) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs min-w-0 lg:col-span-3 lg:order-6">
-                <h4 className="text-xs font-bold text-slate-300 uppercase mb-3 flex items-center gap-1.5">
-                  <Clock size={14} className="text-amber-400" /> Janelas Oficiais (Dublin)
-                </h4>
-                <div className="space-y-2">
-                  <div className="p-2.5 rounded-xl border bg-emerald-950/20 border-emerald-500/30 flex justify-between items-center gap-2 flex-wrap">
-                    <div>
-                      <strong className="text-emerald-300 block">08:15 – 11:00 (Londres Open)</strong>
-                      <span className="text-[10px] text-slate-400">Setup 2: London Sniper (DD Baixo)</span>
-                    </div>
-                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">MANHÃ</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl border bg-cyan-950/20 border-cyan-500/30 flex justify-between items-center gap-2 flex-wrap">
-                    <div>
-                      <strong className="text-cyan-300 block">18:15 – 20:45 (US Power Hour)</strong>
-                      <span className="text-[10px] text-slate-400">Setup 1: Power Hour Trend (Expansão)</span>
-                    </div>
-                    <span className="text-[9px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">TARDE</span>
-                  </div>
-                  <div className="p-2 rounded-xl bg-slate-900/50 border border-slate-800/80 text-[10px] text-slate-400">
-                    ⚠️ <strong>Regra de Mesa:</strong> Saída compulsória de todas as ordens antes das 20h55 Dublin.
-                  </div>
+                    );
+                  })}
                 </div>
-              </div>
+              )}
+            </div>
+
+            {/* CONTROLES DE RISCO (PRESETS DE SL E LOTE) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-3 border-t border-slate-800/80 items-center">
               
-              {/* Setups Fixos Oficiais */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-5 lg:order-2">
-                <h3 className="text-xs font-bold text-slate-300 uppercase font-mono tracking-wider mb-3 flex items-center gap-1.5">
-                  <Award size={14} className="text-amber-400" /> Setups Campeões (Playbook Oficial)
-                </h3>
-                <div className="space-y-2.5">
-                  <div className="p-3 bg-[#070d1a] border border-cyan-500/30 rounded-xl">
-                    <div className="flex justify-between items-center mb-1">
-                      <strong className="text-xs text-cyan-300 font-mono">1. Power Hour Trend (Tarde 18h15)</strong>
-                      <span className="text-[10px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded font-mono">RR 1:1.5</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-                      Cruzamento 9/21 ou 20/50 + FVG Formado (10 barras). Stop ATR 1.5x. Win% 51.2%, DD $500.
-                    </p>
-                  </div>
-
-                  <div className="p-3 bg-[#070d1a] border border-emerald-500/30 rounded-xl">
-                    <div className="flex justify-between items-center mb-1">
-                      <strong className="text-xs text-emerald-300 font-mono">2. London Sniper (Manhã 08h15)</strong>
-                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-mono">RR 1:3</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-                      Cruzamento 20/50 com Distância ≥ 0.4x ATR. Stop Fixo 15 pts. DD de apenas $200!
-                    </p>
-                  </div>
-
-                  <div className="p-3 bg-[#070d1a] border border-purple-500/30 rounded-xl">
-                    <div className="flex justify-between items-center mb-1">
-                      <strong className="text-xs text-purple-300 font-mono">3. FVG Retest Institucional</strong>
-                      <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded font-mono">RR 1:2</span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-                      Reteste em 50% CE com filtro EMA 50. Stop no Extremo do FVG + 1.5 pts.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Setups do Dia (Extraídos por IA) */}
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-5 lg:order-5">
-                <div className="flex justify-between items-center mb-3">
-                  <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
-                    <Sparkles size={14} className="text-cyan-400" /> Setups Extraídos do Otimizador (Hoje)
-                  </h3>
-                  <button onClick={() => setActiveTab('scanner')} className="text-[10px] text-cyan-400 hover:underline font-mono">
-                    Subir Novo Print
-                  </button>
-                </div>
-
-                {scannedSetups.length === 0 ? (
-                  <div className="py-5 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl">
-                    Nenhum setup importado hoje.<br />Vá até a aba <strong>Scanner IA</strong> e envie um print do TradingView.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {scannedSetups.map((s, idx) => (
-                      <div key={idx} className="p-3 bg-[#070d1a] border border-slate-800 rounded-xl font-mono text-xs">
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-amber-400 font-bold">#{s.rank_pos || idx + 1} • {s.trigger_name} ({s.emas})</span>
-                          <span className="text-emerald-400 font-bold">+${s.net_usd} (DD: ${s.dd_usd})</span>
-                        </div>
-                        <div className="text-[11px] text-slate-400 flex justify-between">
-                          <span>Stop: {s.stop_type} | RR: {s.rr}</span>
-                          <span>Win: {s.win_rate} | R Tot: {s.r_total}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              
-              <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-3 lg:order-3">
-                <div className="flex justify-between items-center mb-3">
-                  <h4 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
-                    <CheckSquare size={14} className="text-emerald-400" /> Checklist Pré-Mercado
-                  </h4>
-                  <button onClick={resetChecklist} title="Resetar checklist" className="text-slate-500 hover:text-slate-300">
-                    <RefreshCw size={13} />
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  {checklist.map(item => (
-                    <label key={item.id} className="flex items-start gap-2.5 text-xs text-slate-300 cursor-pointer select-none">
-                      <input 
-                        type="checkbox" 
-                        checked={item.done} 
-                        onChange={() => toggleChecklist(item.id)}
-                        className="mt-0.5 rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
-                      />
-                      <span className={item.done ? 'line-through text-slate-500' : ''}>{item.text}</span>
-                    </label>
+              {/* Lote */}
+              <div className="md:col-span-3 font-mono">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block mb-1">Contratos por Conta:</span>
+                <div className="flex gap-2">
+                  {[1, 2].map(qty => (
+                    <button
+                      key={qty}
+                      type="button"
+                      onClick={() => setContractsQty(qty)}
+                      className={`flex-1 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                        contractsQty === qty 
+                          ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' 
+                          : 'bg-[#070d1a] border-slate-800 text-slate-400 hover:text-white'
+                      }`}>
+                      {qty} {sentinel.monitored_symbol || 'MNQ'}
+                    </button>
                   ))}
                 </div>
               </div>
+
+              {/* Presets de Stop Loss */}
+              <div className="md:col-span-5 font-mono">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold">Stop Loss por Trade (Pontos):</span>
+                  <span className="text-[10px] text-amber-400 font-bold">Teto Máx: 25 pts</span>
+                </div>
+                <div className="flex gap-1.5">
+                  {[
+                    { label: '10 pts', val: 10.0 },
+                    { label: '15 pts (1R)', val: 15.0 },
+                    { label: '20 pts (ATR)', val: 20.0 },
+                  ].map(p => (
+                    <button
+                      key={p.val}
+                      type="button"
+                      onClick={() => setSlPreset(p.val)}
+                      className={`flex-1 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                        slPreset === p.val 
+                          ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' 
+                          : 'bg-[#070d1a] border-slate-800 text-slate-400 hover:text-white'
+                      }`}>
+                      {p.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setSlPreset('custom')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                      slPreset === 'custom' 
+                        ? 'bg-cyan-600 border-cyan-400 text-white shadow-md' 
+                        : 'bg-[#070d1a] border-slate-800 text-slate-400 hover:text-white'
+                    }`}>
+                    Custom
+                  </button>
+                </div>
+                {slPreset === 'custom' && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      step="0.5" 
+                      max="25" 
+                      value={customSlPoints} 
+                      onChange={e => setCustomSlPoints(Math.min(25, Number(e.target.value)))} 
+                      className="w-24 bg-[#070d1a] border border-cyan-500/50 rounded-xl px-2.5 py-1 text-xs text-white" 
+                    />
+                    <span className="text-[10px] text-slate-400">pts (calculado em ${(customSlPoints * 2 * contractsQty).toFixed(2)} de risco no MNQ)</span>
+                  </div>
+                )}
+              </div>
+
+              {/* BOTÕES DE DISPARO (COMPRA E VENDA) */}
+              <div className="md:col-span-4 flex gap-2 font-mono">
+                <button
+                  type="button"
+                  disabled={isExecutingOrder || selectedAccountIds.length === 0}
+                  onClick={() => handleExecuteOrder('BUY')}
+                  className={`flex-1 py-3 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-xl ${
+                    activeSignal?.direction === 'BUY'
+                      ? 'bg-emerald-500 text-slate-950 animate-bounce ring-4 ring-emerald-400/50'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50'
+                  }`}>
+                  <ArrowUpRight size={18} className="stroke-[3]" />
+                  <span>COMPRAR MNQ</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isExecutingOrder || selectedAccountIds.length === 0}
+                  onClick={() => handleExecuteOrder('SELL')}
+                  className={`flex-1 py-3 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-xl ${
+                    activeSignal?.direction === 'SELL'
+                      ? 'bg-rose-500 text-white animate-bounce ring-4 ring-rose-400/50'
+                      : 'bg-rose-600 hover:bg-rose-500 text-white disabled:opacity-50'
+                  }`}>
+                  <ArrowDownRight size={18} className="stroke-[3]" />
+                  <span>VENDER MNQ</span>
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            
+            {/* Card Sentinela Local */}
+            <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-4 lg:order-1">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-xs font-bold text-slate-400 uppercase font-mono tracking-wider flex items-center gap-1.5">
+                  <Eye size={14} className="text-cyan-400" /> Sentinela OpenCV
+                </span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono flex items-center gap-1.5 ${
+                  sentinel.is_online ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400'
+                }`}>
+                  {sentinel.is_online && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />}
+                  {sentinel.is_online ? 'ONLINE' : 'DESCONECTADA'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs font-mono mb-3">
+                <div className="bg-[#070d1a] p-2.5 rounded-xl border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 block">Ativo em Foco</span>
+                  <strong className="text-purple-300 text-sm">{sentinel.monitored_symbol || 'MNQ'}</strong>
+                </div>
+                <div className="bg-[#070d1a] p-2.5 rounded-xl border border-slate-800/80">
+                  <span className="text-[10px] text-slate-500 block">Estado Tela</span>
+                  <strong className="text-white text-sm">{sentinel.current_state}</strong>
+                </div>
+              </div>
+
+              <div className="bg-[#040812] border border-slate-800/90 rounded-xl p-2.5 flex flex-col items-center">
+                <div className="w-full flex justify-between items-center mb-1.5 text-[9px] font-mono text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <span className={`w-1.5 h-1.5 rounded-full ${sentinel.is_online ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                    FEED VISUAL (ROI)
+                  </span>
+                  <span>1.5s refresh</span>
+                </div>
+
+                {sentinel.preview_base64 && sentinel.is_online ? (
+                  <img 
+                    src={sentinel.preview_base64} 
+                    alt="O que a sentinela vê" 
+                    className="max-h-12 w-auto object-contain rounded border border-slate-700/60 shadow-inner"
+                  />
+                ) : (
+                  <div className="py-2.5 text-center text-[10px] text-slate-600 font-mono">
+                    {sentinel.is_online ? 'Aguardando primeiro frame...' : 'Inicie a Sentinela no PC para ver a tela'}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Oportunidades do Dia (Sinais da Sentinela) */}
+            <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-4 lg:order-4">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
+                  <Zap size={14} className="text-emerald-400" /> Oportunidades do Dia
+                  <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-mono">
+                    {signals.length}
+                  </span>
+                </h3>
+                {signals.length > 0 && (
+                  <button onClick={toggleAllSignals} className="text-[10px] text-cyan-400 hover:underline font-mono">
+                    {selectedSignals.length === signals.length ? 'Desmarcar todos' : 'Marcar todos'}
+                  </button>
+                )}
+              </div>
+
+              {signals.length === 0 ? (
+                <div className="py-5 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl font-mono">
+                  Nenhuma oportunidade captada hoje.<br />Inicie a <strong>Sentinela</strong> para detectar gatilhos BUY/SELL.
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                    {signals.map(sig => (
+                      <label key={sig.id} className={`p-2.5 bg-[#070d1a] border rounded-xl flex items-center gap-2.5 cursor-pointer transition-all font-mono text-xs ${selectedSignals.includes(sig.id) ? 'border-cyan-500/60' : 'border-slate-800'}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSignals.includes(sig.id)}
+                          onChange={() => toggleSignal(sig.id)}
+                          className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0 shrink-0"
+                        />
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${sig.direction === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                          {sig.direction}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex justify-between items-center gap-2">
+                            <strong className="text-white truncate">{sig.symbol}</strong>
+                            <span className="text-slate-500 text-[10px] shrink-0">
+                              {sig.created_at ? new Date(sig.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                            </span>
+                          </div>
+                          {sig.info && <p className="text-[10px] text-slate-400 truncate">{sig.info}</p>}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedSignals.length > 0 && (
+                    <button
+                      onClick={() => setShowDeleteSignalsModal(true)}
+                      className="mt-3 w-full py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5">
+                      <Trash2 size={14} /> Apagar ({selectedSignals.length}) selecionada(s)
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Janelas Oficiais (Dublin) */}
+            <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg font-mono text-xs min-w-0 lg:col-span-3 lg:order-6">
+              <h4 className="text-xs font-bold text-slate-300 uppercase mb-3 flex items-center gap-1.5">
+                <Clock size={14} className="text-amber-400" /> Janelas Oficiais (Dublin)
+              </h4>
+              <div className="space-y-2">
+                <div className="p-2.5 rounded-xl border bg-emerald-950/20 border-emerald-500/30 flex justify-between items-center gap-2 flex-wrap">
+                  <div>
+                    <strong className="text-emerald-300 block">08:15 – 11:00 (Londres Open)</strong>
+                    <span className="text-[10px] text-slate-400">Setup 2: London Sniper (DD Baixo)</span>
+                  </div>
+                  <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">MANHÃ</span>
+                </div>
+                <div className="p-2.5 rounded-xl border bg-cyan-950/20 border-cyan-500/30 flex justify-between items-center gap-2 flex-wrap">
+                  <div>
+                    <strong className="text-cyan-300 block">18:15 – 20:45 (US Power Hour)</strong>
+                    <span className="text-[10px] text-slate-400">Setup 1: Power Hour Trend (Expansão)</span>
+                  </div>
+                  <span className="text-[9px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded shrink-0 whitespace-nowrap">TARDE</span>
+                </div>
+                <div className="p-2 rounded-xl bg-slate-900/50 border border-slate-800/80 text-[10px] text-slate-400">
+                  ⚠️ <strong>Regra de Mesa:</strong> Saída compulsória de todas as ordens antes das 20h55 Dublin.
+                </div>
+              </div>
+            </div>
+            
+            {/* Setups Fixos Oficiais */}
+            <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-5 lg:order-2">
+              <h3 className="text-xs font-bold text-slate-300 uppercase font-mono tracking-wider mb-3 flex items-center gap-1.5">
+                <Award size={14} className="text-amber-400" /> Setups Campeões (Playbook Oficial)
+              </h3>
+              <div className="space-y-2.5">
+                <div className="p-3 bg-[#070d1a] border border-cyan-500/30 rounded-xl">
+                  <div className="flex justify-between items-center mb-1">
+                    <strong className="text-xs text-cyan-300 font-mono">1. Power Hour Trend (Tarde 18h15)</strong>
+                    <span className="text-[10px] bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded font-mono">RR 1:1.5</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
+                    Cruzamento 9/21 ou 20/50 + FVG Formado (10 barras). Stop ATR 1.5x. Win% 51.2%, DD $500.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-[#070d1a] border border-emerald-500/30 rounded-xl">
+                  <div className="flex justify-between items-center mb-1">
+                    <strong className="text-xs text-emerald-300 font-mono">2. London Sniper (Manhã 08h15)</strong>
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-mono">RR 1:3</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
+                    Cruzamento 20/50 com Distância ≥ 0.4x ATR. Stop Fixo 15 pts. DD de apenas $200!
+                  </p>
+                </div>
+
+                <div className="p-3 bg-[#070d1a] border border-purple-500/30 rounded-xl">
+                  <div className="flex justify-between items-center mb-1">
+                    <strong className="text-xs text-purple-300 font-mono">3. FVG Retest Institucional</strong>
+                    <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded font-mono">RR 1:2</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
+                    Reteste em 50% CE com filtro EMA 50. Stop no Extremo do FVG + 1.5 pts.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Setups do Dia (Extraídos por IA) */}
+            <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-5 lg:order-5">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-cyan-400" /> Setups Extraídos do Otimizador (Hoje)
+                </h3>
+                <button onClick={() => setActiveTab('scanner')} className="text-[10px] text-cyan-400 hover:underline font-mono">
+                  Subir Novo Print
+                </button>
+              </div>
+
+              {scannedSetups.length === 0 ? (
+                <div className="py-5 text-center text-slate-500 text-xs border border-dashed border-slate-800 rounded-xl font-mono">
+                  Nenhum setup importado hoje.<br />Vá até a aba <strong>Scanner IA</strong> e envie um print do TradingView.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {scannedSetups.map((s, idx) => (
+                    <div key={idx} className="p-3 bg-[#070d1a] border border-slate-800 rounded-xl font-mono text-xs">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-amber-400 font-bold">#{s.rank_pos || idx + 1} • {s.trigger_name} ({s.emas})</span>
+                        <span className="text-emerald-400 font-bold">+${s.net_usd} (DD: ${s.dd_usd})</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 flex justify-between">
+                        <span>Stop: {s.stop_type} | RR: {s.rr}</span>
+                        <span>Win: {s.win_rate} | R Tot: {s.r_total}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* Checklist Pré-Mercado */}
+            <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg min-w-0 lg:col-span-3 lg:order-3">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="text-xs font-bold text-slate-300 uppercase font-mono flex items-center gap-1.5">
+                  <CheckSquare size={14} className="text-emerald-400" /> Checklist Pré-Mercado
+                </h4>
+                <button onClick={resetChecklist} title="Resetar checklist" className="text-slate-500 hover:text-slate-300">
+                  <RefreshCw size={13} />
+                </button>
+              </div>
+              <div className="space-y-2">
+                {checklist.map(item => (
+                  <label key={item.id} className="flex items-start gap-2.5 text-xs text-slate-300 cursor-pointer select-none">
+                    <input 
+                      type="checkbox" 
+                      checked={item.done} 
+                      onChange={() => toggleChecklist(item.id)}
+                      className="mt-0.5 rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                    />
+                    <span className={item.done ? 'line-through text-slate-500' : ''}>{item.text}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
 
           </div>
 
@@ -1168,6 +1446,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                     <option value="Setup 1 - Power Hour">Setup 1: Power Hour Trend</option>
                     <option value="Setup 2 - London Sniper">Setup 2: London Sniper</option>
                     <option value="Setup 3 - FVG Retest">Setup 3: FVG Retest</option>
+                    <option value="Execução Apex Bridge">Execução Apex Bridge</option>
                     <option value="Setup Otimizado do Dia">Setup Otimizado do Dia</option>
                   </select>
                 </div>
@@ -1224,7 +1503,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               <div className="bg-[#0b1222] border border-slate-800 p-4 rounded-2xl shadow-lg">
                 <h3 className="text-xs font-bold text-slate-300 uppercase font-mono mb-3">Histórico de Trades Gravados</h3>
                 {trades.length === 0 ? (
-                  <p className="text-xs text-slate-500 py-6 text-center">Nenhum trade gravado no diário ainda.</p>
+                  <p className="text-xs text-slate-500 py-6 text-center font-mono">Nenhum trade gravado no diário ainda.</p>
                 ) : (
                   <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1 font-mono text-xs">
                     {trades.map(t => (
@@ -1356,6 +1635,34 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                 {isDeletingSignals ? 'Apagando...' : `Apagar (${selectedSignals.length})`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE RELATÓRIO DE EXECUÇÃO TRADOVATE */}
+      {executionReport && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0b1222] border border-slate-800 p-6 rounded-2xl w-full max-w-lg shadow-2xl font-mono">
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircle2 size={22} className="text-emerald-400" />
+              <h3 className="text-sm font-bold text-white uppercase">Ordem Enviada à Apex Tradovate</h3>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">
+              Operação de <strong>{executionReport.direction}</strong> em <strong>{executionReport.symbol}</strong> com Stop Loss em <strong>{executionReport.sl_points} pts</strong> ({executionReport.qty} contrato(s)).
+            </p>
+            <div className="space-y-2 mb-5 max-h-60 overflow-y-auto pr-1">
+              {executionReport.results.map((r, i) => (
+                <div key={i} className="p-2.5 bg-[#070d1a] border border-slate-800 rounded-xl flex justify-between items-center text-xs">
+                  <span className="text-white font-bold">{r.account_name}</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${r.status === 'SUCESSO' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`}>
+                    {r.status}: {r.order_id || r.message}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setExecutionReport(null)} className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 font-bold text-xs text-white rounded-xl transition-all">
+              OK, VOLTAR AO COCKPIT
+            </button>
           </div>
         </div>
       )}
