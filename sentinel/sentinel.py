@@ -18,7 +18,7 @@ from supabase import create_client
 # Dependências da Ponte Tradovate
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from tradovate_client import TradovateClient
+from tradovate_client import TradovateClient, TradovatePenaltyError
 
 # 1. SUPORTE DPI DO WINDOWS (PRECISAO PIXEL-A-PIXEL)
 try:
@@ -52,11 +52,14 @@ CORS(bridge_app)
 
 @bridge_app.route("/bridge/status", methods=["GET"])
 def bridge_status():
+    penalidade = max(0, int(tradovate.penalty_until - time.time()))
     return jsonify({
         "status": "ONLINE",
         "env": tradovate.env,
         "max_sl_cap": tradovate.max_sl_cap,
-        "user_logged": tradovate.username if tradovate.username else "NÃO CONFIGURADO"
+        "user_logged": tradovate.username if tradovate.username else "NÃO CONFIGURADO",
+        "penalty": penalidade,
+        "penalty_message": tradovate.penalty_message,
     })
 
 @bridge_app.route("/bridge/accounts", methods=["GET"])
@@ -64,6 +67,14 @@ def bridge_accounts():
     try:
         contas = tradovate.listar_contas()
         return jsonify({"ok": True, "accounts": contas})
+    except TradovatePenaltyError as e:
+        # Rate limit/captcha da Tradovate: devolve 429 com o tempo de espera
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "retry_after": e.retry_after,
+            "captcha": e.captcha,
+        }), 429
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
 

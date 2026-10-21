@@ -58,6 +58,8 @@ export default function App() {
   // PONTE LOCAL TRADOVATE / APEX
   const [bridgeStatus, setBridgeStatus] = useState('checking'); // 'online', 'offline', 'checking'
   const [bridgeAccounts, setBridgeAccounts] = useState([]);
+  const [bridgeError, setBridgeError] = useState(null);
+  const bridgeRetryRef = useRef(0);
   const [selectedAccountIds, setSelectedAccountIds] = useState([]);
   const [slPreset, setSlPreset] = useState(15.0); // 10, 15, 20 ou 'custom'
   const [customSlPoints, setCustomSlPoints] = useState(15.0);
@@ -196,18 +198,31 @@ export default function App() {
     const checkBridge = async () => {
       try {
         const res = await fetch(`${BRIDGE_URL}/bridge/status`, { method: 'GET', signal: AbortSignal.timeout(2500) });
-        if (res.ok) {
-          setBridgeStatus('online');
-          if (bridgeAccounts.length === 0) {
-            const accRes = await fetch(`${BRIDGE_URL}/bridge/accounts`, { signal: AbortSignal.timeout(4000) });
-            const accData = await accRes.json();
-            if (accData.ok && accData.accounts) {
-              setBridgeAccounts(accData.accounts);
-              setSelectedAccountIds(accData.accounts.map(a => String(a.id)));
-            }
-          }
-        } else {
+        if (!res.ok) {
           setBridgeStatus('offline');
+          return;
+        }
+        setBridgeStatus('online');
+
+        if (bridgeAccounts.length > 0) return;
+        // Backoff: nao insistir na API enquanto o bloqueio do Tradovate estiver ativo
+        if (Date.now() < bridgeRetryRef.current) return;
+
+        const accRes = await fetch(`${BRIDGE_URL}/bridge/accounts`, { signal: AbortSignal.timeout(4000) });
+        let accData = {};
+        try { accData = await accRes.json(); } catch { accData = {}; }
+
+        if (accData.ok && accData.accounts) {
+          setBridgeAccounts(accData.accounts);
+          setSelectedAccountIds(accData.accounts.map(a => String(a.id)));
+          setBridgeError(null);
+          bridgeRetryRef.current = 0;
+        } else {
+          setBridgeError(accData.error || `Falha HTTP ${accRes.status} ao carregar as contas`);
+          const espera = accData.retry_after
+            ? Math.min(accData.retry_after * 1000, 3600000)
+            : 60000;
+          bridgeRetryRef.current = Date.now() + espera;
         }
       } catch {
         setBridgeStatus('offline');
@@ -890,6 +905,12 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
                       </button>
                     );
                   })}
+                </div>
+              )}
+
+              {bridgeError && (
+                <div className="mt-2 p-2.5 bg-rose-950/40 border border-rose-800/60 rounded-xl text-[11px] text-rose-300 font-mono break-words">
+                  <span className="font-bold text-rose-400">ERRO TRADOVATE: </span>{bridgeError}
                 </div>
               )}
             </div>

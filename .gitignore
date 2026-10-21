@@ -12,6 +12,7 @@ env/
 __pycache__/
 *.pyc
 .env
+.tradovate_token.json
 
 # Logs e sistema
 .DS_Store
