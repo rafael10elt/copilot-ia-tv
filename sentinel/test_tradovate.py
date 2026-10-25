@@ -1,97 +1,93 @@
 """
-Teste unico de credenciais Tradovate/Apex.
+Teste unico de credenciais Tradovate/Apex + resolucao de contrato + dry run.
 
 Uso (a partir da pasta sentinel):
-    python test_tradovate.py            # 1 tentativa de autenticacao + account/list
-    python test_tradovate.py --appid "Meu App"  # testa outro appId
+    python test_tradovate.py                      # auth + contas + resolve MNQ1!
+    python test_tradovate.py --symbol MNQ1!       # resolve outro simbolo
+    python test_tradovate.py --dryrun             # valida a ordem (NAO envia ordem real)
 
 IMPORTANTE: o endpoint /auth/accesstokenrequest permite apenas 5 tentativas
 FALHAS por hora. Se o script rodar em loop ele vai estourar o limite e
 bloquear a conta por ~1h (penalty ticket com p-captcha). Rode uma unica vez.
+O token valido fica salvo em .tradovate_token.json e e reaproveitado.
 """
 
 import os
 import sys
 
-import requests
-from dotenv import load_dotenv
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from tradovate_client import TradovateClient, TradovatePenaltyError  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-USER = os.getenv("TRADOVATE_USER", "").strip()
-PASSWORD = os.getenv("TRADOVATE_PASSWORD", "").strip()
-ENV = os.getenv("TRADOVATE_ENV", "live").lower()
-APP_ID = "Sample App"
-APP_VERSION = "1.0"
+SIMBOLO = "MNQ1!"
+DRY_RUN = False
 
-for i, arg in enumerate(sys.argv):
-    if arg == "--appid" and i + 1 < len(sys.argv):
-        APP_ID = sys.argv[i + 1]
+argv = sys.argv[1:]
+for i, arg in enumerate(argv):
+    if arg == "--symbol" and i + 1 < len(argv):
+        SIMBOLO = argv[i + 1]
+    elif arg == "--dryrun":
+        DRY_RUN = True
 
-BASE = "https://live.tradovateapi.com/v1" if ENV == "live" else "https://demo.tradovateapi.com/v1"
-HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
+client = TradovateClient()
+print(f"env={client.env} base={client.base_url} user={client.username!r}")
 
-print(f"env={ENV} base={BASE} appId={APP_ID!r} user={USER!r} senha_len={len(PASSWORD)}")
-if not USER or not PASSWORD:
-    print("FALHA: TRADOVATE_USER/TRADOVATE_PASSWORD ausentes no .env")
-    sys.exit(1)
-
-# --- 1) Autenticacao ---
-payload = {
-    "name": USER,
-    "password": PASSWORD,
-    "appId": APP_ID,
-    "appVersion": APP_VERSION,
-    "cid": 0,
-    "sec": "",
-    "deviceId": "lumi-copilot-desk-diagnostico",
-}
-
+# --- 1) Autenticacao (+ lista de contas) ---
 try:
-    res = requests.post(f"{BASE}/auth/accesstokenrequest", json=payload, headers=HEADERS, timeout=15)
-except requests.RequestException as exc:
-    print(f"FALHA DE REDE: {exc}")
-    sys.exit(2)
-
-try:
-    data = res.json()
-except ValueError:
-    data = {}
-
-if not res.ok:
-    print(f"AUTENTICACAO FALHOU: HTTP {res.status_code} -> {data.get('errorText') or res.text}")
+    contas = client.listar_contas()
+except TradovatePenaltyError as exc:
+    print(f"PENALTY: {exc}")
+    print("  -> Espere o tempo indicado (ou peça reset ao suporte Tradovate) e rode o script UMA vez.")
+    sys.exit(4)
+except Exception as exc:
+    print(f"FALHA: {exc}")
     sys.exit(3)
 
-if not data.get("accessToken"):
-    print("Penalty ticket (rate limit da Tradovate):")
-    print(f"  p-message : {data.get('p-message')}")
-    print(f"  p-time    : {data.get('p-time')}s")
-    print(f"  p-captcha : {data.get('p-captcha')}")
-    print("  -> Espere ~1h (ou peça reset ao suporte Tradovate) e rode o script UMA vez.")
-    sys.exit(4)
+print(f"AUTENTICACAO OK - {len(contas)} conta(s):")
+for acc in contas:
+    print(f"  - id={acc['id']} | name={acc['name']} | type={acc['account_type']} | ativo={acc['is_active']}")
 
-token = data["accessToken"]
-print(f"AUTENTICACAO OK (userStatus={data.get('userStatus')}, hasLive={data.get('hasLive')}, hasFunded={data.get('hasFunded')})")
-
-# --- 2) Lista de contas ---
-auth = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-res = requests.get(f"{BASE}/account/list", headers=auth, timeout=15)
-try:
-    accounts = res.json()
-except ValueError:
-    accounts = []
-
-if not res.ok:
-    print(f"ACCOUNT/LIST FALHOU: HTTP {res.status_code} -> {res.text[:400]}")
-    sys.exit(5)
-
-print(f"CONTAS: {len(accounts)}")
-for acc in accounts:
-    print(
-        f"  - id={acc.get('id')} | name={acc.get('name')} | type={acc.get('accountType')} "
-        f"| active={acc.get('active')} | cash={acc.get('cashBalance')}"
-    )
-
-apex = [a for a in accounts if "apex" in str(a.get("name", "")).lower()]
+apex = [a for a in contas if "apex" in str(a["name"]).lower()]
 print(f"CONTAS COM 'APEX' NO NOME: {len(apex)}")
+
+# --- 2) Resolucao do simbolo monitorado ---
+try:
+    info = client.resolver_contrato(SIMBOLO)
+except TradovatePenaltyError as exc:
+    print(f"PENALTY: {exc}")
+    sys.exit(4)
+except Exception as exc:
+    print(f"FALHA AO RESOLVER '{SIMBOLO}': {exc}")
+    sys.exit(6)
+
+print()
+print(f"RESOLUCAO: {SIMBOLO} -> {info['symbol']}")
+print(f"  produto   : {info['product']} (status: {info.get('productStatus')})")
+print(f"  vencimento: {info.get('expirationDate')}")
+print(f"  tick      : {info['tickSize']} | valor por ponto: ${info['valuePerPoint']}")
+
+# --- 3) Dry run (valida sem enviar ordem) ---
+if DRY_RUN:
+    if not contas:
+        print("Dry run: sem contas para testar.")
+        sys.exit(7)
+    acc = contas[0]
+    try:
+        check = client.dry_run(acc["id"], info, "Buy", 1)
+    except TradovatePenaltyError as exc:
+        print(f"PENALTY: {exc}")
+        sys.exit(4)
+    except Exception as exc:
+        print(f"FALHA NO DRY RUN: {exc}")
+        sys.exit(8)
+
+    print()
+    print(f"DRY RUN conta {acc['id']} ({acc['name']}):")
+    print(f"  ok={check.get('ok')} erro={check.get('error')} motivo={check.get('rejectReason')}")
+    if not check.get("ok"):
+        sys.exit(9)
+
+print()
+print("TUDO OK")

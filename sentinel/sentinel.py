@@ -6,6 +6,7 @@ import re
 import threading
 import ctypes
 import base64
+import logging
 from datetime import datetime, timezone
 import tkinter as tk
 from tkinter import messagebox
@@ -45,6 +46,8 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON)
 
 # Instância do Cliente Tradovate
 tradovate = TradovateClient()
+# Apex requires manual order entry unless it grants prior written consent.
+TRADOVATE_API_ORDER_ALLOWED = False
 
 # Servidor Flask Local para Comunicação com o Cockpit Web
 bridge_app = Flask(__name__)
@@ -55,6 +58,11 @@ def bridge_status():
     penalidade = max(0, int(tradovate.penalty_until - time.time()))
     return jsonify({
         "status": "ONLINE",
+        "api_orders_allowed": TRADOVATE_API_ORDER_ALLOWED,
+        "configured": bool(
+            tradovate.username and tradovate.password and tradovate.app_id
+            and tradovate.cid and tradovate.sec
+        ),
         "env": tradovate.env,
         "max_sl_cap": tradovate.max_sl_cap,
         "user_logged": tradovate.username if tradovate.username else "NÃO CONFIGURADO",
@@ -80,6 +88,19 @@ def bridge_accounts():
 
 @bridge_app.route("/bridge/execute", methods=["POST"])
 def bridge_execute():
+    # The connected accounts/UI are specifically configured for Apex. Their
+    # current agreement requires each order to be entered and confirmed manually.
+    # Keep API order placement closed until Apex provides prior written consent.
+    if not TRADOVATE_API_ORDER_ALLOWED:
+        return jsonify({
+            "ok": False,
+            "error": (
+                "Envio de ordens pela API está bloqueado. As regras atuais da Apex exigem "
+                "entrada manual de cada ordem; obtenha autorização prévia por escrito da Apex "
+                "antes de habilitar qualquer execução por software."
+            ),
+        }), 403
+
     data = request.json or {}
     account_ids = data.get("account_ids", [])
     symbol = data.get("symbol", "MNQ")
@@ -87,9 +108,27 @@ def bridge_execute():
     qty = data.get("qty", 1)
     sl_points = data.get("sl_points", 15.0)
     tp_points = data.get("tp_points", 30.0)
+    dry_run = data.get("dry_run")
 
     if not account_ids:
         return jsonify({"ok": False, "error": "Nenhuma conta selecionada!"}), 400
+
+    try:
+        qty = int(qty)
+        if qty < 1:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Quantidade deve ser um inteiro maior que zero."}), 400
+
+    try:
+        contas_validas = {str(c["id"]): c for c in tradovate.listar_contas() if c.get("is_active", True)}
+        invalidas = [str(a) for a in account_ids if str(a) not in contas_validas]
+        if invalidas:
+            return jsonify({"ok": False, "error": "Conta inexistente ou inativa selecionada."}), 400
+    except TradovatePenaltyError as e:
+        return jsonify({"ok": False, "error": str(e), "retry_after": e.retry_after, "captcha": e.captcha}), 429
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
 
     try:
         resultados = tradovate.executar_operacao(
@@ -98,15 +137,52 @@ def bridge_execute():
             direction=direction,
             qty=qty,
             sl_points=sl_points,
-            tp_points=tp_points
+            tp_points=tp_points,
+            dry_run=dry_run,
         )
-        return jsonify({"ok": True, "results": resultados})
+        houve_sucesso = any(r.get("status") == "SUCESSO" for r in resultados)
+        return jsonify({"ok": houve_sucesso, "results": resultados}), (200 if houve_sucesso else 502)
+    except TradovatePenaltyError as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "retry_after": e.retry_after,
+            "captcha": e.captcha,
+        }), 429
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
+@bridge_app.route("/bridge/resolve", methods=["GET"])
+def bridge_resolve():
+    """Resolve o simbolo monitorado (ex.: MNQ1!) para o contrato Tradovate ativo."""
+    symbol = request.args.get("symbol", "MNQ")
+    try:
+        info = tradovate.resolver_contrato(symbol)
+        return jsonify({"ok": True, "resolved": info})
+    except TradovatePenaltyError as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+            "retry_after": e.retry_after,
+            "captcha": e.captcha,
+        }), 429
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
 def iniciar_servidor_bridge():
     port = int(os.getenv("BRIDGE_PORT", 8765))
-    bridge_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+    log_path = os.path.join(BASE_DIR, "sentinel_bridge.log")
+    try:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s",
+            handlers=[logging.FileHandler(log_path, encoding="utf-8")],
+            force=True,
+        )
+        logging.info("Ponte Tradovate iniciada em http://127.0.0.1:%s", port)
+    except Exception:
+        pass
+    bridge_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False, threaded=True)
 
 def listar_monitores():
     try:
@@ -223,6 +299,7 @@ class FullscreenCalibrator:
 class SentinelApp:
     def __init__(self, root):
         self.root = root
+        self.tradovate = tradovate
         self.root.title("Lumi Sentinel • Prop Desk Monitor")
         self.root.geometry("460x650")
         self.root.configure(bg="#070b14")
@@ -273,8 +350,15 @@ class SentinelApp:
         self.lbl_gatilho.pack(anchor="w", pady=(2, 0))
 
         # Indicador da Ponte Tradovate
-        self.lbl_bridge = tk.Label(info, text=f"Ponte Apex: 127.0.0.1:{os.getenv('BRIDGE_PORT', 8765)} (PRONTA)", font=("Segoe UI", 8, "bold"), fg="#38bdf8", bg="#0d1527")
-        self.lbl_bridge.pack(anchor="w", pady=(4, 0))
+        self.lbl_bridge = tk.Label(info, text=f"Ponte Tradovate: 127.0.0.1:{os.getenv('BRIDGE_PORT', 8765)}", font=("Segoe UI", 8, "bold"), fg="#38bdf8", bg="#0d1527")
+        self.lbl_bridge.pack(anchor="w", pady=(4, 2))
+
+        self.btn_tradovate = tk.Button(
+            info, text="🔐 CONFIGURAR TRADOVATE (ARMAZENAMENTO WINDOWS)",
+            font=("Segoe UI", 8, "bold"), bg="#1e293b", fg="#fbbf24",
+            relief="flat", pady=6, command=self.abrir_config_tradovate, cursor="hand2",
+        )
+        self.btn_tradovate.pack(fill="x", pady=(3, 0))
 
         self.btn_calib = tk.Button(main, text="🎯 1. CALIBRAR CÉLULA DE STATUS", font=("Segoe UI", 10, "bold"), bg="#1e293b", fg="#38bdf8", relief="flat", pady=9, command=self.calibrar, cursor="hand2")
         self.btn_calib.pack(fill="x", pady=(0, 8))
@@ -283,6 +367,119 @@ class SentinelApp:
         self.btn_run.pack(fill="x")
 
         self.root.after(300, self.atualizar_preview_loop)
+        if not all((self.tradovate.username, self.tradovate.password, self.tradovate.app_id, self.tradovate.cid, self.tradovate.sec)):
+            self.root.after(700, self.abrir_config_tradovate)
+
+    def abrir_config_tradovate(self):
+        top = tk.Toplevel(self.root)
+        top.title("Credenciais Tradovate • armazenamento Windows")
+        top.configure(bg="#070b14")
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.grab_set()
+        box = tk.Frame(top, bg="#070b14", padx=20, pady=16)
+        box.pack(fill="both", expand=True)
+
+        tk.Label(
+            box,
+            text="As credenciais e o token ficam no Gerenciador de Credenciais do Windows.\n"
+                 "Depois de salvar, as variáveis TRADOVATE_* antigas são removidas do .env.",
+            justify="left", wraplength=430, font=("Segoe UI", 9), fg="#cbd5e1", bg="#070b14",
+        ).pack(anchor="w", pady=(0, 12))
+
+        # Migra valores existentes em .env para a janela sem gravá-los em logs.
+        values = {
+            "username": self.tradovate.username or os.getenv("TRADOVATE_USER", ""),
+            "password": self.tradovate.password or os.getenv("TRADOVATE_PASSWORD", ""),
+            "app_id": self.tradovate.app_id or os.getenv("TRADOVATE_APP_ID", ""),
+            "app_version": self.tradovate.app_version or os.getenv("TRADOVATE_APP_VERSION", "1.0"),
+            "cid": self.tradovate.cid or os.getenv("TRADOVATE_CID", ""),
+            "sec": self.tradovate.sec or os.getenv("TRADOVATE_SEC", ""),
+        }
+        fields = [
+            ("Login Tradovate", "username", False),
+            ("Senha Tradovate", "password", True),
+            ("Nome da API Key (appId)", "app_id", False),
+            ("CID da API Key", "cid", False),
+            ("SEC / Secret da API Key", "sec", True),
+            ("Versão do app", "app_version", False),
+        ]
+        entries = {}
+        for label, key, secret in fields:
+            tk.Label(box, text=label, font=("Segoe UI", 8, "bold"), fg="#94a3b8", bg="#070b14").pack(anchor="w")
+            entry = tk.Entry(
+                box, width=58, show="●" if secret else "", font=("Segoe UI", 9),
+                bg="#0d1527", fg="white", insertbackground="white", relief="flat",
+            )
+            entry.insert(0, values[key])
+            entry.pack(fill="x", pady=(3, 8))
+            entries[key] = entry
+
+        saved_credentials = bool(self.tradovate.credentials)
+        env_var = tk.StringVar(
+            value=self.tradovate.env if saved_credentials else os.getenv("TRADOVATE_ENV", "demo").strip().lower()
+        )
+        if env_var.get() not in ("demo", "live"):
+            env_var.set("demo")
+        tk.Label(box, text="Ambiente", font=("Segoe UI", 8, "bold"), fg="#94a3b8", bg="#070b14").pack(anchor="w")
+        env_row = tk.Frame(box, bg="#070b14")
+        env_row.pack(anchor="w", pady=(4, 10))
+        for value, label in (("demo", "Demo / Simulação"), ("live", "Live / Real")):
+            tk.Radiobutton(
+                env_row, text=label, value=value, variable=env_var,
+                bg="#070b14", fg="white", selectcolor="#0d1527", activebackground="#070b14",
+            ).pack(side="left", padx=(0, 14))
+
+        tk.Label(
+            box, text="A chave precisa estar autorizada para o ambiente escolhido. Comece em Demo.",
+            wraplength=430, justify="left", font=("Segoe UI", 8), fg="#fbbf24", bg="#070b14",
+        ).pack(anchor="w", pady=(0, 12))
+        tk.Label(
+            box,
+            text="Atenção: as regras atuais da Apex exigem envio manual e proíbem scripts que enviam ordens."
+                 " Salvar credenciais e listar contas não autoriza o uso dos botões de ordem.",
+            wraplength=430, justify="left", font=("Segoe UI", 8, "bold"), fg="#fca5a5", bg="#070b14",
+        ).pack(anchor="w", pady=(0, 12))
+
+        def save():
+            try:
+                credentials = {key: entry.get() for key, entry in entries.items()}
+                credentials["env"] = env_var.get()
+                self.tradovate.salvar_credenciais(credentials)
+                top.destroy()
+                try:
+                    contas = self.tradovate.listar_contas()
+                    self.lbl_bridge.config(text=f"Ponte Tradovate: 127.0.0.1:{os.getenv('BRIDGE_PORT', 8765)} • {self.tradovate.env.upper()} • {len(contas)} conta(s)")
+                    messagebox.showinfo(
+                        "Conexão Tradovate confirmada",
+                        f"Credenciais salvas no Gerenciador de Credenciais do Windows.\n"
+                        f"Conexão autenticada; {len(contas)} conta(s) retornada(s).\n\n"
+                        "Recarregue o painel web para atualizar a lista de contas.",
+                        parent=self.root,
+                    )
+                except Exception as exc:
+                    self.lbl_bridge.config(text=f"Ponte Tradovate: {self.tradovate.env.upper()} • verificar conexão/API Key")
+                    messagebox.showwarning(
+                        "Credenciais salvas; conexão não confirmada",
+                        "As credenciais foram protegidas no Gerenciador de Credenciais do Windows, "
+                        "mas a consulta de contas falhou.\n\n"
+                        f"Diagnóstico: {exc}\n\n"
+                        "Confira ambiente, login, API Key e autorização da conta antes de tentar novamente.",
+                        parent=self.root,
+                    )
+            except Exception as exc:
+                messagebox.showerror("Não foi possível salvar", str(exc), parent=top)
+
+        buttons = tk.Frame(box, bg="#070b14")
+        buttons.pack(fill="x")
+        tk.Button(
+            buttons, text="SALVAR CREDENCIAIS", command=save, font=("Segoe UI", 9, "bold"),
+            bg="#059669", fg="white", relief="flat", padx=12, pady=8,
+        ).pack(side="left")
+        tk.Button(
+            buttons, text="Cancelar", command=top.destroy, font=("Segoe UI", 9),
+            bg="#1e293b", fg="white", relief="flat", padx=12, pady=8,
+        ).pack(side="right")
 
     def toggle_modo_ativo(self):
         self.auto_detect = not self.auto_detect
@@ -463,10 +660,14 @@ class SentinelApp:
                 time.sleep(1)
 
 if __name__ == "__main__":
-    # Inicia a Ponte HTTP Tradovate em segundo plano
-    threading.Thread(target=iniciar_servidor_bridge, daemon=True).start()
+    # Modo ponte pura (sem GUI): estavel em execucao headless/detached.
+    if "--bridge-only" in sys.argv:
+        iniciar_servidor_bridge()
+    else:
+        # Inicia a Ponte HTTP Tradovate em segundo plano
+        threading.Thread(target=iniciar_servidor_bridge, daemon=True).start()
 
-    # Inicia a Interface Gráfica da Sentinela
-    root = tk.Tk()
-    app = SentinelApp(root)
-    root.mainloop()
+        # Inicia a Interface Gráfica da Sentinela
+        root = tk.Tk()
+        app = SentinelApp(root)
+        root.mainloop()

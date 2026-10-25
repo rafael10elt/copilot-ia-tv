@@ -57,6 +57,7 @@ export default function App() {
 
   // PONTE LOCAL TRADOVATE / APEX
   const [bridgeStatus, setBridgeStatus] = useState('checking'); // 'online', 'offline', 'checking'
+  const [apiOrdersAllowed, setApiOrdersAllowed] = useState(false);
   const [bridgeAccounts, setBridgeAccounts] = useState([]);
   const [bridgeError, setBridgeError] = useState(null);
   const bridgeRetryRef = useRef(0);
@@ -202,7 +203,14 @@ export default function App() {
           setBridgeStatus('offline');
           return;
         }
+        const statusData = await res.json();
         setBridgeStatus('online');
+        setApiOrdersAllowed(Boolean(statusData.api_orders_allowed));
+        if (!statusData.configured) {
+          setBridgeError('Ponte local ativa, mas falta configurar a API Key da Tradovate na janela do Sentinel.');
+        } else if (!statusData.api_orders_allowed) {
+          setBridgeError('Ordens via API bloqueadas para contas Apex. A Apex exige entrada manual, salvo autorização prévia por escrito.');
+        }
 
         if (bridgeAccounts.length > 0) return;
         // Backoff: nao insistir na API enquanto o bloqueio do Tradovate estiver ativo
@@ -214,8 +222,12 @@ export default function App() {
 
         if (accData.ok && accData.accounts) {
           setBridgeAccounts(accData.accounts);
-          setSelectedAccountIds(accData.accounts.map(a => String(a.id)));
-          setBridgeError(null);
+          setSelectedAccountIds([]);
+          setBridgeError(!statusData.configured
+            ? 'Configuração/API Key incompleta.'
+            : !statusData.api_orders_allowed
+            ? 'Ordens via API bloqueadas para contas Apex; use a plataforma Tradovate para enviar cada ordem manualmente.'
+            : accData.accounts.length ? null : 'Nenhuma conta Tradovate disponível para este login.');
           bridgeRetryRef.current = 0;
         } else {
           setBridgeError(accData.error || `Falha HTTP ${accRes.status} ao carregar as contas`);
@@ -275,7 +287,7 @@ export default function App() {
       const data = await res.json();
       setIsExecutingOrder(false);
 
-      if (data.ok) {
+      if (data.results) {
         setExecutionReport({
           direction,
           symbol: payload.symbol,
@@ -284,19 +296,20 @@ export default function App() {
           results: data.results
         });
 
-        // Grava no diário de trades automaticamente como registro
-        supabase.from('trade_logs_cop').insert({
-          symbol: payload.symbol,
-          direction: direction,
-          setup_name: `Execução Apex Bridge (${effectiveSl} pts SL)`,
-          result_r: 0,
-          result_usd: 0,
-          rule_respected: true,
-          notes: `Disparado em ${selectedAccountIds.length} conta(s). Lote: ${payload.qty}.`
-        }).then();
-
-        stopAlarm();
-        setActiveSignal(null);
+        if (data.results.every(r => r.status === 'SUCESSO')) {
+          // Grava no diário somente quando todas as contas confirmam entrada e bracket.
+          supabase.from('trade_logs_cop').insert({
+            symbol: payload.symbol,
+            direction: direction,
+            setup_name: `Execução Apex Bridge (${effectiveSl} pts SL)`,
+            result_r: 0,
+            result_usd: 0,
+            rule_respected: true,
+            notes: `Disparado em ${selectedAccountIds.length} conta(s). Lote: ${payload.qty}.`
+          }).then();
+          stopAlarm();
+          setActiveSignal(null);
+        }
       } else {
         setFeedback({
           title: "Falha na Execução Tradovate",
@@ -992,7 +1005,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
               <div className="md:col-span-4 flex gap-2 font-mono">
                 <button
                   type="button"
-                  disabled={isExecutingOrder || selectedAccountIds.length === 0}
+                  disabled={isExecutingOrder || selectedAccountIds.length === 0 || !apiOrdersAllowed}
                   onClick={() => handleExecuteOrder('BUY')}
                   className={`flex-1 py-3 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-xl ${
                     activeSignal?.direction === 'BUY'
@@ -1005,7 +1018,7 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
 
                 <button
                   type="button"
-                  disabled={isExecutingOrder || selectedAccountIds.length === 0}
+                  disabled={isExecutingOrder || selectedAccountIds.length === 0 || !apiOrdersAllowed}
                   onClick={() => handleExecuteOrder('SELL')}
                   className={`flex-1 py-3 px-3 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 shadow-xl ${
                     activeSignal?.direction === 'SELL'
@@ -1666,18 +1679,38 @@ Retorne ESTRITAMENTE um objeto JSON válido no seguinte formato:
           <div className="bg-[#0b1222] border border-slate-800 p-6 rounded-2xl w-full max-w-lg shadow-2xl font-mono">
             <div className="flex items-center gap-2 mb-3">
               <CheckCircle2 size={22} className="text-emerald-400" />
-              <h3 className="text-sm font-bold text-white uppercase">Ordem Enviada à Apex Tradovate</h3>
+              <h3 className="text-sm font-bold text-white uppercase">Resultado da execução Tradovate</h3>
             </div>
             <p className="text-xs text-slate-400 mb-4">
-              Operação de <strong>{executionReport.direction}</strong> em <strong>{executionReport.symbol}</strong> com Stop Loss em <strong>{executionReport.sl_points} pts</strong> ({executionReport.qty} contrato(s)).
+              Operação de <strong>{executionReport.direction}</strong> em <strong>{executionReport.symbol}</strong>
+              {executionReport.results?.[0]?.symbol && executionReport.results[0].symbol !== executionReport.symbol ? (
+                <> {'→'} <strong className="text-cyan-300">{executionReport.results[0].symbol}</strong></>
+              ) : null}
+              {' '}com Stop Loss em <strong>{executionReport.sl_points} pts</strong> ({executionReport.qty} contrato(s)).
             </p>
             <div className="space-y-2 mb-5 max-h-60 overflow-y-auto pr-1">
               {executionReport.results.map((r, i) => (
-                <div key={i} className="p-2.5 bg-[#070d1a] border border-slate-800 rounded-xl flex justify-between items-center text-xs">
-                  <span className="text-white font-bold">{r.account_name}</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${r.status === 'SUCESSO' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`}>
-                    {r.status}: {r.order_id || r.message}
-                  </span>
+                <div key={i} className="p-2.5 bg-[#070d1a] border border-slate-800 rounded-xl text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-white font-bold">{r.account_name}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      r.status === 'SUCESSO'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : r.status === 'PARCIAL'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'}`}>
+                      {r.status}{r.order_id ? ` #${r.order_id}` : ''}
+                    </span>
+                  </div>
+                  {r.fill_price ? (
+                    <div className="mt-1.5 text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
+                      <span>Preço: <span className="text-slate-200">{r.fill_price}</span></span>
+                      <span>SL: <span className="text-rose-300">{r.sl_price}</span></span>
+                      <span>TP: <span className="text-emerald-300">{r.tp_price}</span></span>
+                      {r.risk_usd ? <span>Risco: <span className="text-amber-300">${r.risk_usd}</span></span> : null}
+                    </div>
+                  ) : null}
+                  {r.message ? <div className="mt-1 text-[10px] text-amber-300/90 leading-relaxed">{r.message}</div> : null}
                 </div>
               ))}
             </div>

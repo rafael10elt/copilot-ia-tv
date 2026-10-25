@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 .env
 .tradovate_token.json
+.tradovate_device_id
 
 # Logs e sistema
 .DS_Store
