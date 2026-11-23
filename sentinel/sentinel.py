@@ -2,6 +2,7 @@ import os
 import json
 import time
 import re
+import threading
 import ctypes
 import base64
 import logging
@@ -110,7 +111,7 @@ class FullscreenCalibrator:
         self.canvas.pack(fill="both", expand=True)
         self.canvas.create_text(
             12, 12, anchor="nw",
-            text=f"MONITOR {monitor['index']} • Arraste sobre a célula de status • ESC cancela",
+            text=f"MONITOR {monitor['index']} • Selecione apenas o texto BUY/SELL colorido do TradingView • ESC cancela",
             fill="white", font=("Segoe UI", 11, "bold"))
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
@@ -317,21 +318,21 @@ class SentinelApp:
         if total_pixels == 0:
             return "AGUARDANDO"
 
-        # A célula pode ser pequena, escura ou conter texto branco. A exigência
-        # anterior de 12% e saturação 110 descartava fundos vermelhos do TradingView.
-        mask_red1 = cv2.inRange(hsv, np.array([0, 65, 45]), np.array([12, 255, 255]))
-        mask_red2 = cv2.inRange(hsv, np.array([168, 65, 45]), np.array([180, 255, 255]))
+        # O sinal pode ser apenas texto colorido sobre um fundo escuro. Detectamos
+        # pixels saturados da fonte em vez de exigir que a cor preencha o retângulo.
+        mask_red1 = cv2.inRange(hsv, np.array([0, 45, 40]), np.array([12, 255, 255]))
+        mask_red2 = cv2.inRange(hsv, np.array([168, 45, 40]), np.array([180, 255, 255]))
         mask_red = mask_red1 | mask_red2
-        mask_green = cv2.inRange(hsv, np.array([35, 65, 45]), np.array([90, 255, 255]))
+        mask_green = cv2.inRange(hsv, np.array([35, 45, 40]), np.array([90, 255, 255]))
 
         red_count = cv2.countNonZero(mask_red)
         green_count = cv2.countNonZero(mask_green)
         pct_red = red_count / total_pixels
         pct_green = green_count / total_pixels
 
-        if pct_red >= 0.04 and pct_red > (pct_green * 1.25):
+        if pct_red >= 0.01 and pct_red > (pct_green * 1.2):
             return "SELL"
-        elif pct_green >= 0.04 and pct_green > (pct_red * 1.25):
+        elif pct_green >= 0.01 and pct_green > (pct_red * 1.2):
             return "BUY"
 
         return "AGUARDANDO"
