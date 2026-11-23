@@ -30,3 +30,11 @@
 - **Gestão de Contas de Mesa:** Módulo completo para acompanhar tamanho da conta, custo do teste, status de aprovação e histórico de saques realizados.
 - **Diário de Trades:** Registro de operações com verificação de disciplina e cálculo automático de R e financeiro.
 - **Atualização da Sentinela Python:** Ajustado `sentinel.py` para sincronizar exclusivamente nas tabelas `_cop`.
+
+### [Round 4] - Cockpit enxuto, focado na Sentinela OpenCV
+- **Módulo de Execução Tática removido:** saíram a ponte Tradovate/Apex do frontend, a seleção de contas, os presets de stop/lote e o relatório de execução. As entradas voltam a ser 100% manuais na plataforma.
+- **Scanner Groq Vision removido:** a chave foi descontinuada; saíram o upload de prints, o modal de API Key e a validação de modelos de visão.
+- **Setups do Otimizador removidos:** saíram o card "Setups Extraídos do Otimizador" e a Rotina das Operações (varredura macro / score de prop).
+- **Abas Mesas e Diário removidas:** o frontend agora opera somente com o Cockpit.
+- **Alerta Verde/Vermelho:** quando a visão computacional identifica verde (BUY) ou vermelho (SELL), o Cockpit exibe faixa visual piscante com direção, ativo e horário, além do alarme sonoro de 30s (sirene ascendente para compra e descendente para venda). O som é armável no header e a preferência fica no `localStorage`.
+- **Heartbeat da Sentinela:** status ONLINE/OFFLINE real baseado em `last_seen`, marcando "SINAL PERDIDO" após 60s sem frame.
